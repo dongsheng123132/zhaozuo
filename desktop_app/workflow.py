@@ -37,6 +37,53 @@ def replayable_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def merge_recording_segments(
+    existing: list[dict[str, Any]],
+    appended: list[dict[str, Any]],
+    gap_ms: int = 800,
+) -> list[dict[str, Any]]:
+    """Append a recording segment while keeping offsets monotonic.
+
+    Every EventRecorder starts its own clock at zero. Profiles need one shared
+    timeline, so a resumed segment is shifted to begin shortly after the last
+    event of the previous segment.
+    """
+
+    merged: list[dict[str, Any]] = []
+    for event in existing:
+        copied = dict(event)
+        copied["segment_index"] = int(copied.get("segment_index") or 1)
+        merged.append(copied)
+    if not appended:
+        return merged
+    if not merged:
+        return [
+            {
+                **event,
+                "offset_ms": int(event.get("offset_ms") or 0),
+                "segment_index": int(event.get("segment_index") or 1),
+            }
+            for event in appended
+        ]
+
+    next_segment = max(
+        (int(event.get("segment_index") or 1) for event in merged),
+        default=0,
+    ) + 1
+    first_offset = min(int(event.get("offset_ms") or 0) for event in appended)
+    last_offset = max(
+        (int(event.get("offset_ms") or 0) for event in merged),
+        default=first_offset - max(gap_ms, 0),
+    )
+    shift = last_offset + max(gap_ms, 0) - first_offset
+    for event in appended:
+        copied = dict(event)
+        copied["offset_ms"] = int(copied.get("offset_ms") or 0) + shift
+        copied["segment_index"] = next_segment
+        merged.append(copied)
+    return merged
+
+
 def classify_effect(goal: str) -> dict[str, str] | None:
     normalized = goal.casefold()
     if "抖音" in normalized and any(word in normalized for word in ("点赞", "喜欢")):
@@ -318,6 +365,10 @@ def save_recording(
                 "goal": goal,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "event_count": len(events),
+                "segment_count": max(
+                    (int(event.get("segment_index") or 1) for event in events),
+                    default=0,
+                ),
                 "typed_text_policy": "redacted",
                 "profile": profile_path.name,
             },

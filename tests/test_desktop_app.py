@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,12 @@ from unittest.mock import patch
 from desktop_app.replay import ReplayEngine
 from desktop_app.capture import EventRecorder
 from desktop_app import windows
-from desktop_app.workflow import build_profile, classify_effect, save_recording
+from desktop_app.workflow import (
+    build_profile,
+    classify_effect,
+    merge_recording_segments,
+    save_recording,
+)
 from shared.profile import resolve_action, validate_profile
 
 
@@ -180,6 +186,43 @@ class DesktopWorkflowTests(unittest.TestCase):
         expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
         self.assertEqual(ctypes.sizeof(windows.INPUT), expected)
 
+    def test_recording_segments_append_on_one_monotonic_timeline(self) -> None:
+        first = merge_recording_segments([], self.events[:2])
+        resumed = [dict(self.events[2], offset_ms=250)]
+        merged = merge_recording_segments(first, resumed, gap_ms=800)
+
+        self.assertEqual([event["segment_index"] for event in merged], [1, 1, 2])
+        self.assertEqual(merged[-1]["offset_ms"], first[-1]["offset_ms"] + 800)
+
+    def test_appended_wechat_send_moves_effect_to_new_final_step(self) -> None:
+        before_send = [dict(event) for event in self.events[:2]]
+        for event in before_send:
+            event["window"] = {
+                "hwnd": 10,
+                "title": "微信",
+                "class_name": "Qt51514QWindowIcon",
+                "rect": [0, 0, 840, 880],
+            }
+        send = dict(
+            self.events[2],
+            window=before_send[-1]["window"],
+            kind="keyboard.press",
+            key="ENTER",
+            offset_ms=200,
+        )
+        merged = merge_recording_segments(
+            merge_recording_segments([], before_send), [send]
+        )
+        profile = build_profile(
+            "session-append",
+            "自动回复微信消息",
+            merged,
+            "微信",
+        )
+        action = profile["actions"]["wechat.reply_message"]
+        self.assertNotIn("effect", action["steps"][-2])
+        self.assertEqual(action["steps"][-1]["effect"]["kind"], "send_message")
+
     def test_replay_stops_before_final_effect_then_resumes_only_that_step(self) -> None:
         profile = build_profile(
             "session-3",
@@ -222,6 +265,8 @@ class DesktopWorkflowTests(unittest.TestCase):
             self.assertTrue(paths["events"].exists())
             self.assertTrue(paths["profile"].exists())
             self.assertTrue(paths["summary"].exists())
+            summary = json.loads(paths["summary"].read_text(encoding="utf-8"))
+            self.assertEqual(summary["segment_count"], 1)
 
 
 if __name__ == "__main__":

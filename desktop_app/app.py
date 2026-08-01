@@ -15,6 +15,7 @@ from desktop_app.replay import ReplayEngine
 from desktop_app.workflow import (
     build_profile,
     classify_effect,
+    merge_recording_segments,
     save_recording,
 )
 from shared.profile import ProfileError
@@ -49,6 +50,9 @@ class ZhaozuoApp:
         self.session_id = ""
         self.session_dir: Path | None = None
         self.recorder: EventRecorder | None = None
+        self.recorded_events: list[dict] = []
+        self.recording_mode = "new"
+        self.current_segment_index = 0
         self.profile: dict | None = None
         self.paths: dict[str, Path] = {}
         self.replay = ReplayEngine()
@@ -256,6 +260,11 @@ class ZhaozuoApp:
             control_row, "开始演示", self._pill_action, GREEN, "#08251d"
         )
         self.record_button.pack(side="left")
+        self.append_button = self._button(
+            control_row, "继续补录", self.continue_recording, CARD_2, TEXT
+        )
+        self.append_button.pack(side="left", padx=(8, 0))
+        self.append_button.configure(state="disabled")
         self.status_var = tk.StringVar(value="准备就绪 · 输入正文始终遮蔽")
         tk.Label(
             control_row,
@@ -437,6 +446,14 @@ class ZhaozuoApp:
             goal = str(summary.get("goal", "")).strip() or "恢复的录制任务"
             self.session_id = str(summary.get("session_id", session_dir.name))
             self.session_dir = session_dir
+            self.recorded_events = merge_recording_segments([], events)
+            self.current_segment_index = max(
+                (
+                    int(event.get("segment_index") or 1)
+                    for event in self.recorded_events
+                ),
+                default=0,
+            )
             self.goal_var.set(goal)
             self.evidence_var.set(title_evidence)
             self.profile = build_profile(
@@ -470,6 +487,7 @@ class ZhaozuoApp:
             self.inputs_text.insert("1.0", "\n".join(f"{name}=" for name in placeholders))
         self.status_var.set(f"已恢复最近动作 · {len(action['steps'])} 步")
         self.report_var.set(f"已恢复会话 {self.session_id}；请重新填写回放输入。")
+        self.append_button.configure(state="normal")
 
     def show_dashboard(self) -> None:
         self.dashboard.deiconify()
@@ -483,40 +501,69 @@ class ZhaozuoApp:
                 self.status_var.set("请先描述任务目标")
                 self.goal_entry.focus_set()
                 return
-            self.start_recording()
+            self.start_recording(append=False)
         elif self.state == "recording":
             self.stop_recording()
         elif self.state == "executing":
             self.replay.cancel()
             self.status_var.set("正在停止执行…")
 
-    def start_recording(self) -> None:
+    def continue_recording(self) -> None:
+        if not self.profile or not self.recorded_events:
+            self.report_var.set("请先完成第一段演示，再继续补录。")
+            return
+        self.start_recording(append=True)
+
+    def start_recording(self, append: bool = False) -> None:
         if classify_effect(self.goal_var.get()):
             self.effect_var.set(True)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
         self.execute_button.configure(text="真实执行")
         self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
-        self.session_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
-        self.session_dir = RECORDINGS / self.session_id
+        self.recording_mode = "append" if append else "new"
+        if not append:
+            self.session_id = (
+                datetime.now().strftime("%Y%m%d-%H%M%S")
+                + "-"
+                + uuid.uuid4().hex[:6]
+            )
+            self.session_dir = RECORDINGS / self.session_id
+            self.recorded_events = []
+            self.current_segment_index = 0
+        elif not self.session_dir:
+            self.report_var.set("找不到当前动作的录制目录，请重新演示。")
+            return
+        self.current_segment_index += 1
         self.recorder = EventRecorder(
-            self.session_id,
-            self.session_dir / "screenshots",
+            f"{self.session_id}-segment-{self.current_segment_index:02d}",
+            self.session_dir / "screenshots" / f"segment-{self.current_segment_index:02d}",
             capture_screenshots=self.screenshot_var.get(),
         )
         self.recorder.start()
         self.started_at = time.monotonic()
         self.state = "recording"
-        self.record_button.configure(text="停止演示", bg=RED, fg="#2c0910")
-        self.status_var.set("录制中 · 点击漂浮按钮结束")
+        self.record_button.configure(
+            text="停止补录" if append else "停止演示", bg=RED, fg="#2c0910"
+        )
+        self.append_button.configure(state="disabled")
+        self.status_var.set(
+            f"正在录制第 {self.current_segment_index} 段 · 点击漂浮按钮结束"
+        )
         self._refresh_pill()
 
     def stop_recording(self) -> None:
         if not self.recorder or not self.session_dir:
             return
-        events = self.recorder.stop()
+        captured_events = self.recorder.stop()
+        self.recorded_events = merge_recording_segments(
+            self.recorded_events if self.recording_mode == "append" else [],
+            captured_events,
+        )
+        events = self.recorded_events
         self.state = "idle"
         self.record_button.configure(text="重新演示", bg=GREEN, fg="#08251d")
+        self.append_button.configure(state="normal")
 
         final_title = ""
         if events:
@@ -558,8 +605,18 @@ class ZhaozuoApp:
         self.inputs_text.delete("1.0", "end")
         if placeholders:
             self.inputs_text.insert("1.0", "\n".join(f"{name}=" for name in placeholders))
-        self.status_var.set(f"已生成草案 · {len(events)} 步")
-        self.report_var.set(f"已保存动作草案 · 会话 {self.session_id}")
+        segment_count = max(
+            (int(event.get("segment_index") or 1) for event in events),
+            default=0,
+        )
+        self.status_var.set(
+            f"已追加第 {segment_count} 段 · 共 {len(action['steps'])} 步"
+            if self.recording_mode == "append"
+            else f"已生成草案 · {len(action['steps'])} 步"
+        )
+        self.report_var.set(
+            f"已保存动作草案 · 会话 {self.session_id} · {segment_count} 个片段"
+        )
         self.confirm_var.set(False)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
