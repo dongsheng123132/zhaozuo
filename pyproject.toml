@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zhaozuo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source Windows teach-by-demonstration automation with auditable action profiles"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["comtypes>=1.4,<2"]
+dependencies = [
+  "comtypes>=1.4,<2",
+  "Pillow>=10,<13",
+]
 license = { file = "LICENSE" }
 keywords = ["windows", "automation", "uia", "actionparity", "computer-use"]
 classifiers = [
@@ -26,9 +29,12 @@ Issues = "https://github.com/dongsheng123132/zhaozuo/issues"
 "ActionParity protocol" = "https://github.com/dongsheng123132/action-parity"
 
 [project.scripts]
-zhaozuo = "desktop_app.app:main"
+zhaozuo = "desktop_app.entrypoint:main"
 zhaozuo-record = "recorder.cli:main"
 zhaozuo-profile = "executor.cli:main"
+
+[project.optional-dependencies]
+build = ["pyinstaller==6.21.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
