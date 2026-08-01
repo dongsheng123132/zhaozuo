@@ -32,7 +32,7 @@
 - 发送、发布、点赞等对外动作在最终一步再次确认；
 - 默认 dry-run，真实执行必须显式授权，执行中可按 Esc 中止。
 
-尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、跨版本自动回归和签名安装包。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
+尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、跨版本自动回归和代码签名。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
 
 ## 快速开始
 
@@ -53,6 +53,15 @@ py -3.11 -m venv .venv
 ```powershell
 pyw -3.11 -m desktop_app
 ```
+
+## 下载 Windows 版本
+
+GitHub [Releases](https://github.com/dongsheng123132/zhaozuo/releases) 提供两种 Windows x64 产物：
+
+- `Zhaozuo-Setup-*.exe`：免管理员权限的按用户安装包，数据保存在 `%LOCALAPPDATA%\Zhaozuo`；
+- `Zhaozuo-portable-*.zip`：解压即用，数据保存在解压目录的 `data\` 中。
+
+当前技术预览版尚未购买代码签名证书，因此 Windows SmartScreen 可能显示“未知发布者”。请从本仓库 Release 下载，并使用同一 Release 中的 `SHA256SUMS.txt` 核对文件。不要从第三方网盘或转载站下载。
 
 校验和检查兼容动作档案：
 

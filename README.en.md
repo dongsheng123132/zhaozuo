@@ -32,7 +32,16 @@ Automating Chrome, WPS, WeChat, or another application through Zhaozuo does **no
 - pauses before external effects such as sending, publishing, and social reactions;
 - defaults to dry-run and allows Esc to stop real execution.
 
-Full UIA trees, multimodal step understanding, OCR, a profile registry, cross-version regression, and signed installers are not implemented yet. The current extractor uses local rules rather than a general multimodal model.
+Full UIA trees, multimodal step understanding, OCR, a profile registry, cross-version regression, and code signing are not implemented yet. The current extractor uses local rules rather than a general multimodal model.
+
+## Windows downloads
+
+GitHub [Releases](https://github.com/dongsheng123132/zhaozuo/releases) provides two Windows x64 artifacts:
+
+- `Zhaozuo-Setup-*.exe`: a per-user installer that stores data in `%LOCALAPPDATA%\Zhaozuo`;
+- `Zhaozuo-portable-*.zip`: an extracted portable build that stores data beside the executable under `data\`.
+
+Technical-preview binaries are currently unsigned, so Windows SmartScreen may identify the publisher as unknown. Download only from this repository and verify the files against `SHA256SUMS.txt` from the same release.
 
 ## Quick start
 

@@ -19,10 +19,10 @@ from desktop_app.workflow import (
     save_recording,
 )
 from shared.profile import ProfileError
+from shared.runtime import data_root
 
 
-ROOT = Path(__file__).resolve().parents[1]
-RECORDINGS = ROOT / "recordings"
+RECORDINGS = data_root() / "recordings"
 
 BG = "#0b1020"
 CARD = "#151c30"

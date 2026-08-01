@@ -1,4 +1,4 @@
-from desktop_app.app import main
+from desktop_app.entrypoint import main
 
 
 if __name__ == "__main__":

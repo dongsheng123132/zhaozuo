@@ -38,6 +38,16 @@ py -3.11 -m venv .venv
   profiles/wps/create-document.action-profile.json --json
 ```
 
+构建未签名 Windows 技术预览产物：
+
+```powershell
+.\.venv\Scripts\python -m pip install -e ".[build]"
+.\.venv\Scripts\python scripts/build_windows.py
+
+# 同时构建安装包时，需要 Inno Setup 6
+.\.venv\Scripts\python scripts/build_windows.py --installer --smoke-installer
+```
+
 stdout 只应包含结果，stderr 用于诊断；`--json` 顶层必须包含 `ok`。业务成功必须有可观察证据，不能只检查点击是否执行。
 
 ## 提交 Pull Request

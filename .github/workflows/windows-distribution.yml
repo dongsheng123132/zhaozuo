@@ -1,0 +1,61 @@
+name: Windows distribution
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-distribution.yml"
+      - "desktop_app/**"
+      - "shared/**"
+      - "packaging/windows/**"
+      - "scripts/build_windows.py"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python build dependencies
+        run: python -m pip install -e ".[build]"
+      - name: Install pinned Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $version = "6.7.3"
+          $expected = "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup-$version.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "inno-setup"
+          Invoke-WebRequest `
+            -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" `
+            -OutFile $installer
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Inno Setup checksum mismatch: $actual"
+          }
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$installDir" `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Inno Setup installation failed with exit code $($process.ExitCode)"
+          }
+          "iscc=$(Join-Path $installDir 'ISCC.exe')" >> $env:GITHUB_OUTPUT
+      - name: Build and smoke-test distributions
+        shell: pwsh
+        run: python scripts/build_windows.py --installer --smoke-installer --iscc "${{ steps.inno.outputs.iscc }}"
+      - name: Upload unsigned technical-preview artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: zhaozuo-windows-unsigned
+          path: dist/release/*
+          if-no-files-found: error
