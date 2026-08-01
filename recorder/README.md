@@ -4,7 +4,12 @@
 
 ## 当前能力
 
-`python -m recorder.cli new-session` 会建立一次隐私安全的录制会话和 `events.jsonl` 信封。当前尚未接入 Windows 全局输入钩子、截图、UIA 树或 OCR，因此输出中的 `capture_active` 为 `false`，不会假装已经完成真实录制。
+`python -m recorder.cli new-session` 仍只负责建立一次隐私安全的录制会话和
+`events.jsonl` 信封，因此该命令输出中的 `capture_active` 为 `false`。
+
+真实 Windows 功能演示位于 `desktop_app/`：它采用轮询式全局输入采样，可捕获点击、
+快捷键和遮蔽文字段，并生成候选 Profile。当前尚未接入 UIA 树或 OCR，也不会把这版
+相对坐标录制标成 `learned` / `validated`。
 
 ## 计划采集的数据
 

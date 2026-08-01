@@ -13,7 +13,8 @@ dependencies = []
 [project.scripts]
 shadowcore-record = "recorder.cli:main"
 shadowcore-execute = "executor.cli:main"
+zhaozuo = "desktop_app.app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["recorder*", "executor*", "shared*"]
+include = ["recorder*", "executor*", "shared*", "desktop_app*"]

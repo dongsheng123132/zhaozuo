@@ -23,6 +23,7 @@
 
 ```text
 recorder/                 录制会话和原始事件封装
+desktop_app/              「照做」Windows 漂浮录制与回放演示器
 profile_builder/          从多次示范中提炼候选步骤（当前为设计骨架）
 profiles/
   schema/                 Shadow Profile JSON Schema
@@ -51,9 +52,17 @@ python -m executor.cli plan profiles/chrome/open-url.shadow.json `
 
 python -m recorder.cli new-session `
   --app chrome --task browser.open_url --json
+
+# 启动「照做」桌面演示器
+pyw -3.11 -m desktop_app
 ```
 
-`plan` 只解析变量并输出执行计划，不会控制键盘鼠标。真实 UI 捕获与回放将在完成第一轮人工演示后接入。
+命令行 `plan` 仍然只解析变量并输出执行计划，不会控制键盘鼠标。
+
+「照做」桌面演示器已经可以捕获全局点击、快捷键和遮蔽后的文字输入段，生成候选
+Shadow Profile，并在显式授权后执行窗口相对位置回放与窗口标题证据验证。它仍是功能
+演示：当前步骤提炼是本地规则，不是多模态 AI；尚未接入 UIA 控件树、OCR 和版本回归。
+完整说明见 [`docs/DESKTOP-DEMO.md`](docs/DESKTOP-DEMO.md)。
 
 ## 安全原则
 
@@ -65,7 +74,7 @@ python -m recorder.cli new-session `
 
 ## 下一步
 
-1. 在本机录制 Chrome `browser.open_url` 两次，比较窗口移动前后的事件与 UIA 树。
-2. 把稳定步骤写回 Chrome Profile，并接入最小 Windows 执行驱动。
+1. 用「照做」在本机录制 Chrome `browser.open_url` 两次，比较窗口移动前后的事件。
+2. 接入 UIA 控件树，把相对位置点击升级为稳定控件定位。
 3. 以本机 WPS 12.1.0.26895 录制 `document.create_and_save`，并确认实际启动进程没有落到残留旧版。
 4. 加入失败分支：窗口未出现、目标控件缺失、保存路径已存在。
