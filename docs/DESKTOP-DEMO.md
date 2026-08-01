@@ -1,6 +1,6 @@
 # 「照做」桌面演示器
 
-「照做」是 ShadowCore 的第一版 Windows 交互原型。产品口号是：
+「照做」是影核（ActionParity）面向旧软件的 Windows 兼容交互原型。产品口号是：
 
 > 你做一遍，它照做；不是照着点，而是对结果负责。
 
@@ -13,7 +13,7 @@
 
 ```text
 照做桌面服务：录制 / 提炼 / 回放 / 验证
-ShadowCore：Action 与 Shadow Profile 契约
+兼容动作档案：Action、输入、风险与证据契约
 PodApp：以后接入的第二控制面与任务入口
 ```
 
@@ -73,7 +73,7 @@ pyw -3.11 -m desktop_app
 生成文件位于 `recordings/<session-id>/`：
 
 - `events.jsonl`：原始遮蔽事件；
-- `draft.shadow.json`：候选 Shadow Profile；
+- `draft.action-profile.json`：候选兼容动作档案；
 - `session.json`：会话摘要，包含 `segment_count`；
 - `screenshots/`：仅在用户主动开启时产生。
 

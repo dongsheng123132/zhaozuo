@@ -265,6 +265,7 @@ class DesktopWorkflowTests(unittest.TestCase):
             self.assertTrue(paths["events"].exists())
             self.assertTrue(paths["profile"].exists())
             self.assertTrue(paths["summary"].exists())
+            self.assertEqual(paths["profile"].name, "draft.action-profile.json")
             summary = json.loads(paths["summary"].read_text(encoding="utf-8"))
             self.assertEqual(summary["segment_count"], 1)
 

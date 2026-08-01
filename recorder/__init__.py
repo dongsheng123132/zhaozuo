@@ -1,1 +1,1 @@
-"""Recorder session envelope for the ShadowCore learning demo."""
+"""Privacy-safe recording sessions for Zhaozuo."""

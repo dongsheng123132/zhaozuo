@@ -58,8 +58,8 @@ def _new_session(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="shadowcore-record",
-        description="Create privacy-safe ShadowCore recording sessions.",
+        prog="zhaozuo-record",
+        description="Create privacy-safe Zhaozuo recording sessions.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

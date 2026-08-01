@@ -1,4 +1,4 @@
-"""照做桌面演示器：ShadowCore 的 Windows 录制与回放原型。"""
+"""照做：面向 Windows 第三方软件的录制与回放原型。"""
 
 __all__ = ["__version__"]
 

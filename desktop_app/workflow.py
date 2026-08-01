@@ -352,7 +352,7 @@ def save_recording(
         "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
         encoding="utf-8",
     )
-    profile_path = session_dir / "draft.shadow.json"
+    profile_path = session_dir / "draft.action-profile.json"
     profile_path.write_text(
         json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

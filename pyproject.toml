@@ -3,17 +3,32 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shadowcore-learning-demo"
+name = "zhaozuo"
 version = "0.1.0"
-description = "Windows Shadow Profile learning experiment for Chrome and WPS"
+description = "Open-source Windows teach-by-demonstration automation with auditable action profiles"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["comtypes>=1.4,<2"]
+license = { file = "LICENSE" }
+keywords = ["windows", "automation", "uia", "actionparity", "computer-use"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Desktop Environment",
+]
+
+[project.urls]
+Homepage = "https://github.com/dongsheng123132/zhaozuo"
+Repository = "https://github.com/dongsheng123132/zhaozuo"
+Issues = "https://github.com/dongsheng123132/zhaozuo/issues"
+"ActionParity protocol" = "https://github.com/dongsheng123132/action-parity"
 
 [project.scripts]
-shadowcore-record = "recorder.cli:main"
-shadowcore-execute = "executor.cli:main"
 zhaozuo = "desktop_app.app:main"
+zhaozuo-record = "recorder.cli:main"
+zhaozuo-profile = "executor.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

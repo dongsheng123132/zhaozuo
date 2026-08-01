@@ -1,1 +1,1 @@
-"""Shared contracts for the ShadowCore learning demo."""
+"""Shared contracts for Zhaozuo compatibility action profiles."""

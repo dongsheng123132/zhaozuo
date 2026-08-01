@@ -10,7 +10,7 @@ PLACEHOLDER_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 
 class ProfileError(ValueError):
-    """Raised when a Shadow Profile cannot be loaded or resolved."""
+    """Raised when a compatibility action profile cannot be loaded or resolved."""
 
 
 def load_profile(path: str | Path) -> dict[str, Any]:

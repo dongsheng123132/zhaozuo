@@ -1,5 +1,5 @@
 {
-  "$schema": "../schema/shadow-profile.schema.json",
+  "$schema": "../schema/compatibility-action-profile.schema.json",
   "profile_version": "0.1",
   "profile_id": "windows.chrome.learning-demo",
   "kind": "external_ui_adapter",

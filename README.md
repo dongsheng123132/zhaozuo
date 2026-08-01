@@ -1,83 +1,127 @@
-# ShadowCore Learning Demo（影核软件学习试验）
+# 照做（Zhaozuo）
 
-这是一个面向 Windows 第三方软件的 Shadow Profile（软件影子档案）实验项目。
+> 你做一遍，它照做；不是照着点，而是对结果负责。
 
-目标不是让 Chrome、WPS 主动改造成影核应用，而是验证一条兼容路线：当软件没有可调用的 Action Core、CLI 或 API 时，系统能否通过少量示范，学习一个稳定的业务动作，并在新的窗口位置和界面状态下复现它。
+[English](README.en.md) · [影核（ActionParity）协议](https://github.com/dongsheng123132/action-parity) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md)
 
-## 与正式影核协议的边界
+照做是一款面向 Windows 第三方软件的开源“示范即自动化”工具。它捕获经过隐私遮蔽的人工操作，将操作提炼成可审阅的**兼容动作档案**（Compatibility Action Profile），再按照风险、确认和成功证据策略进行回放。
 
-- [ActionParity / ShadowCore](../cli+gui兼容的ai时代的软件开放框架/) 是正式协议：软件自身应让 GUI、CLI、MCP、API 共用一个 Action Core。
-- 本项目是外部兼容实验：为无法修改的第三方软件建立 Shadow Profile，并用 UI Automation、键盘语义、OCR 和视觉做兜底。
-- 外部录制回放不能证明目标软件符合 ActionParity；它只是让没有机器入口的软件暂时可被 Agent 操作。
+当前版本是 **v0.1.0 技术预览版**，适合研究、演示和沙箱测试，不应直接用于无人监督的生产自动化。
 
-## 第一阶段试点
+## 它解决什么问题
 
-| 软件 | 第一个动作 | Action ID | 当前状态 |
+理想情况下，软件应按照[影核（ActionParity，亦称 ShadowCore protocol）](https://github.com/dongsheng123132/action-parity)，让 GUI、CLI、MCP、API 和测试共同调用一个无界面的 Action Core。但现实中大量 Windows 软件只有图形界面，无法由使用者改造。
+
+照做提供外部兼容路径：
+
+```text
+新软件：Agent ──► Action Core ──► 业务结果
+旧软件：Agent ──► 照做 ──► 兼容动作档案 ──► 第三方 GUI
+```
+
+外部录制回放**不表示目标软件符合影核协议**。Chrome、WPS 或微信能被照做操作，只代表存在一条受约束的兼容路径。目标软件以后提供正式 CLI、API 或 Action Core 时，档案应优先切换到原生入口。
+
+## 当前能力
+
+- 捕获 Windows 全局点击、快捷键和输入焦点；
+- 采集点击处或输入焦点的 Windows UI Automation 控件身份；
+- 文本默认只保存占位符和长度，不保存原文；
+- 支持分段补录和应用重启后恢复最近动作；
+- 生成带稳定 Action ID、输入契约、风险和成功证据的候选档案；
+- 按“UIA → 窗口相对位置 → 绝对坐标”逐级回放并报告降级；
+- 发送、发布、点赞等对外动作在最终一步再次确认；
+- 默认 dry-run，真实执行必须显式授权，执行中可按 Esc 中止。
+
+尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、跨版本自动回归和签名安装包。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
+
+## 快速开始
+
+要求：Windows 10/11、Python 3.11 或更高版本。
+
+```powershell
+git clone https://github.com/dongsheng123132/zhaozuo.git
+cd zhaozuo
+py -3.11 -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+
+# 启动桌面演示器
+.\.venv\Scripts\zhaozuo.exe
+```
+
+开发时也可以直接运行：
+
+```powershell
+pyw -3.11 -m desktop_app
+```
+
+校验和检查兼容动作档案：
+
+```powershell
+python -m executor.cli validate profiles/chrome/open-url.action-profile.json --json
+
+python -m executor.cli plan profiles/chrome/open-url.action-profile.json `
+  browser.open_url --input url=https://example.com --json
+```
+
+`plan` 只解析变量并输出执行计划，不控制键盘鼠标。
+
+## 学习流程
+
+学习单位不是“整个软件”，而是一个稳定的业务动作：
+
+1. 命名业务目标并分配 Action ID；
+2. 录制最短成功路径；
+3. 改变窗口、输入和初始状态再次示范；
+4. 提炼变量、定位器、风险和成功证据；
+5. 先 dry-run 并人工审阅；
+6. 在沙箱中真实回放；
+7. 明确版本范围并完成回归后，才能把档案从 `draft` 提升为 `validated`。
+
+一次坐标录制只能生成 `draft`，不能宣称动作已经学会。完整流程见 [docs/LEARNING-WORKFLOW.md](docs/LEARNING-WORKFLOW.md)。
+
+## 示例状态
+
+| 软件 | 动作 | Action ID | 状态 |
 | --- | --- | --- | --- |
-| Chrome | 打开网址 | `browser.open_url` | 草案 Profile 已建立，待真实录制验证 |
-| WPS 文字 | 新建、输入并保存文档 | `document.create_and_save` | 已发现本机 12.1.0.26895，待真实录制 |
+| Chrome | 打开网址 | `browser.open_url` | `draft` |
+| WPS 文字 | 新建、输入并保存文档 | `document.create_and_save` | `draft` |
+| 微信等社交软件 | 回复、发布、点赞的安全契约 | 多个 | `draft`，未绑定稳定定位器 |
 
-学习按“一个软件、一个动作”推进，而不是一次学习整个软件。一个动作通常录制 2～3 遍：基准流程、窗口/初始状态变化、一个常见异常分支。若第一遍已经得到稳定的 UIA 或快捷键定位，第二、三遍只用于验证，不机械追求次数。
+示例只用于说明档案结构，不等于支持对应软件的所有版本，也不表示本项目与这些软件厂商存在隶属或背书关系。
 
 ## 项目结构
 
 ```text
-recorder/                 录制会话和原始事件封装
-desktop_app/              「照做」Windows 漂浮录制与回放演示器
-profile_builder/          从多次示范中提炼候选步骤（当前为设计骨架）
-profiles/
-  schema/                 Shadow Profile JSON Schema
-  chrome/                 Chrome 动作档案
-  wps/                    WPS 动作档案
-executor/                 Profile 校验与安全执行计划
-demos/chrome/             Chrome 试点步骤和验收条件
-demos/wps/                WPS 试点步骤和验收条件
-docs/                     架构、学习流程和格式说明
-recordings/               本机录制数据；默认不进 Git
-artifacts/                截图、OCR、报告等；默认不进 Git
-tests/                    Profile 与会话契约测试
+desktop_app/              “照做”Windows 漂浮录制与回放界面
+recorder/                 隐私安全的录制会话封装
+profile_builder/          多次示范到候选动作的提炼设计
+profiles/schema/          兼容动作档案 JSON Schema
+profiles/                 示例动作档案
+executor/                 档案校验、dry-run 与安全执行计划
+demos/                    试点步骤和验收条件
+docs/                     架构、工作流和格式说明
+recordings/               本机录制数据，默认不进入 Git
+artifacts/                截图和报告，默认不进入 Git
+tests/                    契约与执行安全测试
 ```
 
-## 现在可以做什么
+## 安全边界
 
-项目代码只依赖 Python 标准库。建议使用 Python 3.11 或更高版本。
+1. 不要把密码、验证码、Cookie、令牌、联系人内容或文档正文提交到仓库；
+2. 截图默认关闭，录制文本默认遮蔽；
+3. 真实回放必须显式授权；
+4. 对外通信、发布、付款、删除等动作必须声明副作用并在生效前确认；
+5. 成功必须由窗口、控件、文件或内容摘要等证据证明；
+6. 请只在你拥有或获准操作的电脑、账号和软件上使用。
 
-```powershell
-python -m unittest discover -s tests -v
+发现安全问题请阅读 [SECURITY.md](SECURITY.md)，不要在公开 Issue 中发布可直接利用的细节。
 
-python -m executor.cli validate profiles/chrome/open-url.shadow.json --json
+## 参与贡献
 
-python -m executor.cli plan profiles/chrome/open-url.shadow.json `
-  browser.open_url --input url=https://example.com --json
+欢迎提交新的定位器、失败分支、回归样本和第三方软件档案。贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，尤其注意隐私数据和 `draft` / `learned` / `validated` 的证据要求。
 
-python -m recorder.cli new-session `
-  --app chrome --task browser.open_url --json
+## 许可证
 
-# 启动「照做」桌面演示器
-pyw -3.11 -m desktop_app
-```
+Apache License 2.0，见 [LICENSE](LICENSE)。
 
-命令行 `plan` 仍然只解析变量并输出执行计划，不会控制键盘鼠标。
-
-「照做」桌面演示器已经可以捕获全局点击、点击处/输入焦点的 UIA 控件身份、快捷键和
-遮蔽后的文字输入段，生成候选 Shadow Profile，并按“UIA → 窗口相对位置 → 绝对坐标”
-回放。发送、发布和点赞会停在最终一步前，要求当下再次确认。它仍是功能演示：当前步骤
-提炼是本地规则，不是多模态 AI；尚未保存完整 UIA 树，也未接入 OCR 和版本回归。
-录制结束后可用“继续补录”向同一个动作追加片段，例如先录“进入群并填写正文”，再补录
-“点击发送”和“验证结果”；应用重启后会恢复最近动作，重新填写变量即可重复执行。
-完整说明见 [`docs/DESKTOP-DEMO.md`](docs/DESKTOP-DEMO.md)。
-
-## 安全原则
-
-1. 录制默认不保存输入正文；密码、验证码、令牌和隐私字段必须遮蔽。
-2. 执行器先产生计划和风险说明，再进入真实执行模式。
-3. 不使用裸坐标作为唯一定位；优先级为原生入口、UIA/无障碍、稳定快捷键、OCR/视觉、相对坐标。
-4. 写文件、发送消息、付款、删除等动作必须在 Profile 中声明副作用与确认策略。
-5. 每次执行都要保存可观察证据，不能以“没有报错”代替成功。
-
-## 下一步
-
-1. 用「照做」在本机录制 Chrome `browser.open_url` 两次，比较窗口移动前后的事件。
-2. 保存点击附近的局部 UIA 树，给候选定位器评分并做跨版本回归。
-3. 以本机 WPS 12.1.0.26895 录制 `document.create_and_save`，并确认实际启动进程没有落到残留旧版。
-4. 加入失败分支：窗口未出现、目标控件缺失、保存路径已存在。
+“照做 / Zhaozuo”是本项目名称。第三方产品和商标归各自权利人所有。

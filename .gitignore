@@ -1,10 +1,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
 .venv/
 dist/
 build/
 *.egg-info/
+.env
+.env.*
+!.env.example
+*.log
 
 # 录制内容可能包含屏幕和隐私信息，默认永不提交。
 recordings/*

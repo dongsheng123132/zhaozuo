@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ProfileContractTests(unittest.TestCase):
     def test_all_example_profiles_are_valid(self) -> None:
-        profile_paths = sorted((ROOT / "profiles").glob("*/*.shadow.json"))
+        profile_paths = sorted((ROOT / "profiles").glob("*/*.action-profile.json"))
         self.assertGreaterEqual(len(profile_paths), 2)
         for profile_path in profile_paths:
             with self.subTest(profile=profile_path.name):
@@ -21,7 +21,7 @@ class ProfileContractTests(unittest.TestCase):
                 self.assertEqual(errors, [])
 
     def test_chrome_action_resolves_url(self) -> None:
-        profile = load_profile(ROOT / "profiles/chrome/open-url.shadow.json")
+        profile = load_profile(ROOT / "profiles/chrome/open-url.action-profile.json")
         action = resolve_action(
             profile, "browser.open_url", {"url": "https://example.com"}
         )
@@ -29,7 +29,7 @@ class ProfileContractTests(unittest.TestCase):
         self.assertEqual(typed["args"]["text"], "https://example.com")
 
     def test_missing_required_input_is_rejected(self) -> None:
-        profile = load_profile(ROOT / "profiles/chrome/open-url.shadow.json")
+        profile = load_profile(ROOT / "profiles/chrome/open-url.action-profile.json")
         with self.assertRaises(ProfileError):
             resolve_action(profile, "browser.open_url", {})
 
@@ -41,7 +41,7 @@ class ProfileContractTests(unittest.TestCase):
                 load_profile(invalid)
 
     def test_schema_file_is_valid_json(self) -> None:
-        schema_path = ROOT / "profiles/schema/shadow-profile.schema.json"
+        schema_path = ROOT / "profiles/schema/compatibility-action-profile.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
 

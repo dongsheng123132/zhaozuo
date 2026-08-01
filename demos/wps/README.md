@@ -9,7 +9,7 @@
 本机已发现：
 
 - 当前注册版本：`12.1.0.26895`；
-- 当前候选：`C:/Users/ZhuanZ/AppData/Local/Kingsoft/WPS Office/12.1.0.26895/office6/wps.exe`；
+- 当前候选：`%LOCALAPPDATA%/Kingsoft/WPS Office/12.1.0.26895/office6/wps.exe`；
 - 残留旧版：`12.1.0.25865`。
 
 因此第一次录制前必须确认：
@@ -33,4 +33,4 @@
 - 执行后检查文件存在、大小大于 0，并在后续阶段验证文档内容摘要；
 - 失败后能关闭测试文档或保留现场，不污染真实文档。
 
-草案 Profile：`profiles/wps/create-document.shadow.json`。
+草案档案：`profiles/wps/create-document.action-profile.json`。

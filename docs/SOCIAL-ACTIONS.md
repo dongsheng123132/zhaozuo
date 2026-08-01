@@ -8,7 +8,7 @@
 | `wechat_official.publish_article` | 发布公众号文章 | 优先官方接口，发布前当下确认 | 后台出现 published 状态和标题 |
 | `douyin.like_video` | 点赞用户指定的视频 | 定位视频，点赞前当下确认 | 点赞控件变为已选中 |
 
-契约草案见 `profiles/social/action-contracts.shadow.json`。它们的状态是 `draft`，只是锁定
+契约草案见 `profiles/social/action-contracts.action-profile.json`。它们的状态是 `draft`，只是锁定
 Action ID、输入、风险和证据，不表示已经适配某个微信或浏览器版本。
 
 ## 自动化原则

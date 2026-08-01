@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-本仓库只负责第三方 Windows 软件的操作学习与 Shadow Profile 兼容实验。正式 ActionParity / ShadowCore 规范仍以相邻的 `cli+gui兼容的ai时代的软件开放框架` 仓库为准。
+本仓库只负责第三方 Windows 软件的操作学习与兼容动作档案实验。正式影核（ActionParity）规范以 `https://github.com/dongsheng123132/action-parity` 为准。
 
 ## 开发约束
 
@@ -19,6 +19,6 @@
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m executor.cli validate profiles/chrome/open-url.shadow.json --json
-python -m executor.cli validate profiles/wps/create-document.shadow.json --json
+python -m executor.cli validate profiles/chrome/open-url.action-profile.json --json
+python -m executor.cli validate profiles/wps/create-document.action-profile.json --json
 ```

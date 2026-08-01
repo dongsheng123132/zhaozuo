@@ -71,8 +71,8 @@ def _plan(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="shadowcore-execute",
-        description="Validate Shadow Profiles and build safe execution plans.",
+        prog="zhaozuo-profile",
+        description="Validate compatibility action profiles and build safe execution plans.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

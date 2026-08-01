@@ -17,7 +17,7 @@
 - 不依赖固定屏幕坐标；
 - 中英文 Chrome 至少能通过快捷键路径工作；
 - Chrome 未启动和已启动两种状态都能处理；
-- Profile 输入 URL 被日志遮蔽；
+- 兼容动作档案输入 URL 被日志遮蔽；
 - 地址栏值或等价浏览器状态能够证明导航结果。
 
-草案 Profile：`profiles/chrome/open-url.shadow.json`。
+草案档案：`profiles/chrome/open-url.action-profile.json`。

@@ -1,4 +1,4 @@
-# Shadow Profile 格式（v0.1）
+# 兼容动作档案格式（v0.1）
 
 Profile 根对象包含：
 
@@ -15,7 +15,7 @@ Profile 根对象包含：
 - `risk` 与 `confirmation`：副作用等级和确认策略；
 - `steps`：有唯一 ID 的语义步骤；
 - `success_evidence`：成功断言；
-- `learned_from`：支持此 Profile 的录制会话 ID。
+- `learned_from`：支持此档案的录制会话 ID。
 
 ## 步骤示例
 

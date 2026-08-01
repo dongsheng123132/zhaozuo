@@ -1,1 +1,1 @@
-"""Safe planning executor for Shadow Profiles."""
+"""Safe planning executor for compatibility action profiles."""

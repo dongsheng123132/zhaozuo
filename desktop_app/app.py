@@ -39,7 +39,7 @@ FONT = "Microsoft YaHei UI"
 class ZhaozuoApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("照做 · ShadowCore")
+        self.root.title("照做")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.configure(bg=BG)
@@ -189,7 +189,7 @@ class ZhaozuoApp:
 
     def _build_dashboard(self) -> None:
         self.dashboard = tk.Toplevel(self.root)
-        self.dashboard.title("照做 · 任务工作台 · ShadowCore")
+        self.dashboard.title("照做 · 任务工作台")
         self.dashboard.geometry("640x760")
         self.dashboard.minsize(580, 660)
         self.dashboard.configure(bg=BG)
@@ -207,7 +207,7 @@ class ZhaozuoApp:
         ).pack(anchor="w")
         tk.Label(
             container,
-            text="ShadowCore 驱动的 Windows 动作学习器",
+            text="Windows 兼容动作学习器 · Powered by ActionParity",
             bg=BG,
             fg=MUTED,
             font=(FONT, 10),
@@ -431,9 +431,10 @@ class ZhaozuoApp:
                 for line in (session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            existing = json.loads(
-                (session_dir / "draft.shadow.json").read_text(encoding="utf-8")
-            )
+            profile_path = session_dir / "draft.action-profile.json"
+            if not profile_path.exists():
+                profile_path = session_dir / "draft.shadow.json"
+            existing = json.loads(profile_path.read_text(encoding="utf-8"))
             existing_action = next(iter(existing.get("actions", {}).values()), {})
             title_evidence = next(
                 (
@@ -468,7 +469,7 @@ class ZhaozuoApp:
 
         self.paths = {
             "events": session_dir / "events.jsonl",
-            "profile": session_dir / "draft.shadow.json",
+            "profile": profile_path,
             "summary": session_dir / "session.json",
         }
         action = next(iter(self.profile["actions"].values()))

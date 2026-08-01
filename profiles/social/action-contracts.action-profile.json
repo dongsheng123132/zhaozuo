@@ -1,5 +1,5 @@
 {
-  "$schema": "../schema/shadow-profile.schema.json",
+  "$schema": "../schema/compatibility-action-profile.schema.json",
   "profile_version": "0.1",
   "profile_id": "windows.social-actions.contract-drafts",
   "kind": "external_ui_adapter",
@@ -71,7 +71,7 @@
     },
     "wechat_official.publish_article": {
       "title": "发布微信公众号文章",
-      "description": "优先选择官方接口；仅在接口不覆盖时使用浏览器 Shadow Profile。自动填写后停在发布前等待确认。",
+      "description": "优先选择官方接口；仅在接口不覆盖时使用浏览器兼容动作档案。自动填写后停在发布前等待确认。",
       "input_schema": {
         "type": "object",
         "properties": {

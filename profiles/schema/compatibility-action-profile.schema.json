@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://shadowcore.example/schema/shadow-profile-v0.1.json",
-  "title": "Shadow Profile",
+  "$id": "https://raw.githubusercontent.com/dongsheng123132/zhaozuo/main/profiles/schema/compatibility-action-profile.schema.json",
+  "title": "Zhaozuo Compatibility Action Profile",
   "type": "object",
   "required": [
     "profile_version",
