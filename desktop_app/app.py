@@ -15,7 +15,6 @@ from desktop_app.replay import ReplayEngine
 from desktop_app.workflow import (
     build_profile,
     classify_effect,
-    event_summary,
     save_recording,
 )
 from shared.profile import ProfileError
@@ -60,6 +59,7 @@ class ZhaozuoApp:
 
         self._build_pill()
         self._build_dashboard()
+        self._restore_latest_recording()
         self._refresh_pill()
         self.root.after(250, self._tick)
 
@@ -185,7 +185,7 @@ class ZhaozuoApp:
 
     def _build_dashboard(self) -> None:
         self.dashboard = tk.Toplevel(self.root)
-        self.dashboard.title("照做 · 任务工作台")
+        self.dashboard.title("照做 · 任务工作台 · ShadowCore")
         self.dashboard.geometry("640x760")
         self.dashboard.minsize(580, 660)
         self.dashboard.configure(bg=BG)
@@ -396,6 +396,81 @@ class ZhaozuoApp:
         widget.insert("1.0", value)
         widget.configure(state="disabled")
 
+    def _restore_latest_recording(self) -> None:
+        """Restore the newest saved action after the desktop process restarts."""
+
+        if not RECORDINGS.exists():
+            return
+        candidates = sorted(
+            (
+                path
+                for path in RECORDINGS.iterdir()
+                if path.is_dir()
+                and (path / "session.json").exists()
+                and (path / "events.jsonl").exists()
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            return
+        session_dir = candidates[0]
+        try:
+            summary = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
+            events = [
+                json.loads(line)
+                for line in (session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            existing = json.loads(
+                (session_dir / "draft.shadow.json").read_text(encoding="utf-8")
+            )
+            existing_action = next(iter(existing.get("actions", {}).values()), {})
+            title_evidence = next(
+                (
+                    str(item.get("expected", ""))
+                    for item in existing_action.get("success_evidence", [])
+                    if item.get("kind") == "window.title_contains"
+                ),
+                "",
+            )
+            goal = str(summary.get("goal", "")).strip() or "恢复的录制任务"
+            self.session_id = str(summary.get("session_id", session_dir.name))
+            self.session_dir = session_dir
+            self.goal_var.set(goal)
+            self.evidence_var.set(title_evidence)
+            self.profile = build_profile(
+                self.session_id,
+                goal,
+                events,
+                title_evidence,
+                final_effect=None,
+            )
+        except (OSError, ValueError, StopIteration, TypeError):
+            return
+
+        self.paths = {
+            "events": session_dir / "events.jsonl",
+            "profile": session_dir / "draft.shadow.json",
+            "summary": session_dir / "session.json",
+        }
+        action = next(iter(self.profile["actions"].values()))
+        detected_effect = any(isinstance(step.get("effect"), dict) for step in action["steps"])
+        self.effect_var.set(detected_effect)
+        lines = [
+            f"{index:02d}. {step.get('description', step['kind'])}"
+            for index, step in enumerate(action["steps"], 1)
+        ]
+        if detected_effect and lines:
+            lines[-1] += "  ⚠ 最终对外动作"
+        self._set_text(self.steps_text, "\n".join(lines) or "最近录制没有有效步骤。")
+        self.inputs_text.delete("1.0", "end")
+        placeholders = list(action["input_schema"]["properties"])
+        if placeholders:
+            self.inputs_text.insert("1.0", "\n".join(f"{name}=" for name in placeholders))
+        self.status_var.set(f"已恢复最近动作 · {len(action['steps'])} 步")
+        self.report_var.set(f"已恢复会话 {self.session_id}；请重新填写回放输入。")
+
     def show_dashboard(self) -> None:
         self.dashboard.deiconify()
         self.dashboard.lift()
@@ -453,7 +528,9 @@ class ZhaozuoApp:
             self.goal_var.get(),
             events,
             self.evidence_var.get(),
-            final_effect=self.effect_var.get(),
+            # An unchecked box means "infer from the recording", not "force
+            # unsafe". A checked box remains an explicit effect declaration.
+            final_effect=True if self.effect_var.get() else None,
         )
         self.paths = save_recording(
             self.session_dir,
@@ -462,10 +539,17 @@ class ZhaozuoApp:
             events,
             self.profile,
         )
-        lines = [f"{index:02d}. {event_summary(event)}" for index, event in enumerate(events, 1)]
+        action = next(iter(self.profile["actions"].values()))
+        detected_effect = any(isinstance(step.get("effect"), dict) for step in action["steps"])
+        if detected_effect:
+            self.effect_var.set(True)
+        lines = [
+            f"{index:02d}. {step.get('description', step['kind'])}"
+            for index, step in enumerate(action["steps"], 1)
+        ]
         if not lines:
             lines = ["没有捕获到目标软件操作，请重新演示。"]
-        elif self.effect_var.get():
+        elif detected_effect:
             lines[-1] += "  ⚠ 最终对外动作"
         self._set_text(self.steps_text, "\n".join(lines))
         placeholders = list(

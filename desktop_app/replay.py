@@ -13,6 +13,9 @@ PLACEHOLDER_ONLY = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}$")
 
 
 class ReplayEngine:
+    MIN_INTER_STEP_WAIT_SECONDS = 0.08
+    MAX_INTER_STEP_WAIT_SECONDS = 12.0
+
     def __init__(self) -> None:
         self.cancelled = threading.Event()
 
@@ -35,6 +38,16 @@ class ReplayEngine:
         if len(actions) != 1:
             raise ProfileError("录制演示 Profile 必须恰好包含一个动作")
         return next(iter(actions))
+
+    @classmethod
+    def replay_delay(cls, previous_offset_ms: int, offset_ms: int) -> float:
+        """Preserve UI settle time while bounding accidental long pauses."""
+
+        captured = max((offset_ms - previous_offset_ms) / 1000, 0.0)
+        return min(
+            max(captured, cls.MIN_INTER_STEP_WAIT_SECONDS),
+            cls.MAX_INTER_STEP_WAIT_SECONDS,
+        )
 
     def run(
         self,
@@ -85,7 +98,7 @@ class ReplayEngine:
                 raise InterruptedError("执行已停止")
             offset = int(step.get("captured_offset_ms", previous_offset))
             if index > 1:
-                self._wait(min(max((offset - previous_offset) / 1000, 0.08), 1.2))
+                self._wait(self.replay_delay(previous_offset, offset))
             previous_offset = offset
             if progress:
                 progress(f"{index}/{len(steps)}  {step.get('description', step['kind'])}")

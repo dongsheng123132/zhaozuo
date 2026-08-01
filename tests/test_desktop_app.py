@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ctypes
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from desktop_app.replay import ReplayEngine
+from desktop_app.capture import EventRecorder
+from desktop_app import windows
 from desktop_app.workflow import build_profile, classify_effect, save_recording
 from shared.profile import resolve_action, validate_profile
 
@@ -102,6 +105,80 @@ class DesktopWorkflowTests(unittest.TestCase):
             classify_effect("发布一篇公众号文章")["action_id"],
             "wechat_official.publish_article",
         )
+
+    def test_wechat_recording_infers_effect_and_semantic_inputs(self) -> None:
+        events = [dict(event) for event in self.events]
+        for event in events:
+            event["window"] = {
+                "hwnd": 10,
+                "title": "微信",
+                "class_name": "Qt51514QWindowIcon",
+                "rect": [0, 0, 840, 880],
+            }
+        events[0]["kind"] = "text.input"
+        events[0]["placeholder"] = "text_1"
+        events[0]["key_count"] = 8
+        events[1]["placeholder"] = "text_2"
+        events[2]["kind"] = "keyboard.press"
+        events[2]["key"] = "ENTER"
+
+        profile = build_profile(
+            "session-wechat",
+            "在目标软件中完成一个可验证任务",
+            events,
+            "微信",
+        )
+        self.assertEqual(validate_profile(profile), [])
+        action = profile["actions"]["wechat.reply_message"]
+        self.assertEqual(
+            set(action["input_schema"]["properties"]),
+            {"conversation", "reply_text"},
+        )
+        self.assertEqual(action["steps"][0]["args"]["text"], "${conversation}")
+        self.assertEqual(action["steps"][1]["args"]["text"], "${reply_text}")
+        self.assertEqual(action["steps"][-1]["effect"]["confirmation"], "always")
+
+    def test_replay_preserves_recorded_wechat_settle_time(self) -> None:
+        self.assertAlmostEqual(ReplayEngine.replay_delay(6469, 17297), 10.828)
+        self.assertEqual(ReplayEngine.replay_delay(0, 30000), 12.0)
+
+    def test_recorder_ignores_taskbar_and_windowless_clicks(self) -> None:
+        self.assertTrue(
+            EventRecorder._is_ignored_context(
+                {"hwnd": 0, "title": "", "class_name": ""}
+            )
+        )
+        self.assertTrue(
+            EventRecorder._is_ignored_context(
+                {"hwnd": 1, "title": "", "class_name": "Shell_TrayWnd"}
+            )
+        )
+        self.assertFalse(
+            EventRecorder._is_ignored_context(
+                {"hwnd": 2, "title": "微信", "class_name": "Qt51514QWindowIcon"}
+            )
+        )
+
+    def test_profile_builder_drops_recorded_taskbar_activation(self) -> None:
+        events = [
+            {
+                "kind": "pointer.click",
+                "button": "left",
+                "absolute": [100, 1000],
+                "relative": None,
+                "window": {"hwnd": 0, "title": "", "class_name": "", "rect": None},
+                "offset_ms": 10,
+            },
+            self.events[0],
+        ]
+        profile = build_profile("session-clean", "点击测试", events, "示例窗口")
+        action = next(iter(profile["actions"].values()))
+        self.assertEqual(len(action["steps"]), 1)
+        self.assertEqual(action["steps"][0]["id"], "step_001")
+
+    def test_windows_input_structure_matches_native_size(self) -> None:
+        expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+        self.assertEqual(ctypes.sizeof(windows.INPUT), expected)
 
     def test_replay_stops_before_final_effect_then_resumes_only_that_step(self) -> None:
         profile = build_profile(

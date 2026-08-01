@@ -93,8 +93,25 @@ class EventRecorder:
         return round((time.monotonic() - self._started) * 1000)
 
     @staticmethod
-    def _is_own_window(context: dict[str, Any]) -> bool:
-        return str(context.get("title", "")).startswith("照做")
+    def _is_ignored_context(context: dict[str, Any]) -> bool:
+        """Return whether an event cannot describe a reusable app action.
+
+        Taskbar/desktop activation clicks are useful to a human demonstrator but
+        harmful in a replay: the recorded taskbar slot can point at another app
+        later. The next real application event already gives the executor the
+        window it should activate.
+        """
+
+        if not int(context.get("hwnd") or 0):
+            return True
+        if str(context.get("title", "")).startswith("照做"):
+            return True
+        return str(context.get("class_name", "")) in {
+            "Shell_TrayWnd",
+            "Shell_SecondaryTrayWnd",
+            "Progman",
+            "WorkerW",
+        }
 
     def _append(self, event: dict[str, Any]) -> None:
         event.setdefault("event_id", str(uuid.uuid4()))
@@ -149,7 +166,7 @@ class EventRecorder:
 
     def _record_click(self, button: str) -> None:
         context = windows.window_context()
-        if self._is_own_window(context):
+        if self._is_ignored_context(context):
             return
         self._flush_text()
         x, y = windows.cursor_position()
@@ -168,7 +185,7 @@ class EventRecorder:
 
     def _record_key(self, vk: int) -> None:
         context = windows.window_context()
-        if self._is_own_window(context):
+        if self._is_ignored_context(context):
             return
 
         modifiers = [

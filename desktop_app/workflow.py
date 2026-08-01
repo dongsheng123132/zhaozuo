@@ -13,6 +13,29 @@ EFFECT_RULES: tuple[tuple[tuple[str, ...], str, str, str], ...] = (
     (("微信", "回复", "发送", "回消息"), "send_message", "发送消息", "message.reply"),
 )
 
+IGNORED_WINDOW_CLASSES = {
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "Progman",
+    "WorkerW",
+}
+
+
+def replayable_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop activation noise that cannot safely be replayed later."""
+
+    result: list[dict[str, Any]] = []
+    for event in events:
+        window = event.get("window", {})
+        if not int(window.get("hwnd") or 0):
+            continue
+        if str(window.get("class_name", "")) in IGNORED_WINDOW_CLASSES:
+            continue
+        if str(window.get("title", "")).startswith("照做"):
+            continue
+        result.append(event)
+    return result
+
 
 def classify_effect(goal: str) -> dict[str, str] | None:
     normalized = goal.casefold()
@@ -52,6 +75,44 @@ def classify_effect(goal: str) -> dict[str, str] | None:
     return None
 
 
+def infer_effect(goal: str, events: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Infer a guarded final effect from both intent and recorded evidence.
+
+    A user may forget to change the default goal or tick the effect checkbox.
+    A final Enter in WeChat must still never become an unguarded generic step.
+    """
+
+    declared = classify_effect(goal)
+    if declared:
+        return declared
+    if not events:
+        return None
+
+    final = events[-1]
+    title = str(final.get("window", {}).get("title", "")).casefold()
+    is_wechat = any(token in title for token in ("微信", "wechat", "weixin"))
+    if not is_wechat:
+        return None
+
+    is_enter = (
+        final.get("kind") == "keyboard.press"
+        and str(final.get("key", "")).upper() == "ENTER"
+    )
+    uia_name = str(final.get("uia", {}).get("name", "")).casefold()
+    is_send_button = final.get("kind") == "pointer.click" and (
+        "发送" in uia_name or "send" in uia_name
+    )
+    if not (is_enter or is_send_button):
+        return None
+    return {
+        "type": "representational_communication",
+        "kind": "send_message",
+        "label": "发送微信回复",
+        "confirmation": "always",
+        "action_id": "wechat.reply_message",
+    }
+
+
 def _action_slug(goal: str) -> str:
     words = re.findall(r"[a-zA-Z0-9]+", goal.lower())
     return "_".join(words[:5]) if words else "recorded_task"
@@ -82,11 +143,30 @@ def build_profile(
     success_title: str,
     final_effect: bool | None = None,
 ) -> dict[str, Any]:
+    events = replayable_events(events)
     properties: dict[str, Any] = {}
     required: list[str] = []
     steps: list[dict[str, Any]] = []
 
-    for index, event in enumerate(events, 1):
+    inferred_effect = infer_effect(goal, events)
+    should_mark_effect = bool(inferred_effect) if final_effect is None else final_effect
+    effect = inferred_effect or {
+        "type": "representational_communication",
+        "kind": "external_effect",
+        "label": "最终对外动作",
+        "confirmation": "always",
+        "action_id": f"workflow.{_action_slug(goal)}",
+    }
+    text_event_indexes = [
+        index for index, event in enumerate(events) if event.get("kind") == "text.input"
+    ]
+    semantic_input_names: dict[int, str] = {}
+    if effect["action_id"] == "wechat.reply_message" and len(text_event_indexes) >= 2:
+        semantic_input_names[text_event_indexes[0]] = "conversation"
+        semantic_input_names[text_event_indexes[-1]] = "reply_text"
+
+    for event_index, event in enumerate(events):
+        index = event_index + 1
         kind = event.get("kind")
         window = event.get("window", {})
         window_locator = {
@@ -136,10 +216,20 @@ def build_profile(
                 }
             )
         elif kind == "text.input":
-            name = str(event["placeholder"])
+            name = semantic_input_names.get(event_index, str(event["placeholder"]))
+            base["description"] = (
+                f"输入变量 ${{{name}}} "
+                f"（原文已遮蔽，约 {event.get('key_count')} 键）"
+            )
             properties[name] = {
                 "type": "string",
-                "description": "回放时提供的文字；演示原文未被保存",
+                "description": (
+                    "目标微信会话；执行日志应最小化记录"
+                    if name == "conversation"
+                    else "微信回复正文；日志必须遮蔽"
+                    if name == "reply_text"
+                    else "回放时提供的文字；演示原文未被保存"
+                ),
             }
             required.append(name)
             locator = {"window": window_locator}
@@ -157,15 +247,6 @@ def build_profile(
             continue
         steps.append(base)
 
-    inferred_effect = classify_effect(goal)
-    should_mark_effect = bool(inferred_effect) if final_effect is None else final_effect
-    effect = inferred_effect or {
-        "type": "representational_communication",
-        "kind": "external_effect",
-        "label": "最终对外动作",
-        "confirmation": "always",
-        "action_id": f"workflow.{_action_slug(goal)}",
-    }
     if should_mark_effect and steps:
         steps[-1]["effect"] = {key: value for key, value in effect.items() if key != "action_id"}
 
