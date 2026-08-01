@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadowcore.example/schema/shadow-profile-v0.1.json",
+  "title": "Shadow Profile",
+  "type": "object",
+  "required": [
+    "profile_version",
+    "profile_id",
+    "kind",
+    "status",
+    "application",
+    "actions"
+  ],
+  "properties": {
+    "profile_version": { "const": "0.1" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "kind": { "const": "external_ui_adapter" },
+    "status": { "enum": ["draft", "learned", "validated"] },
+    "application": {
+      "type": "object",
+      "required": ["id", "name", "platform", "discovery"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "platform": { "const": "windows" },
+        "discovery": {
+          "type": "object",
+          "properties": {
+            "process_names": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "executable_candidates": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "window": { "type": "object" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "actions": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "title",
+          "input_schema",
+          "risk",
+          "confirmation",
+          "steps",
+          "success_evidence"
+        ],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "input_schema": { "type": "object" },
+          "risk": { "enum": ["none", "low", "medium", "high"] },
+          "confirmation": { "enum": ["never", "before_execute", "before_effect"] },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "kind"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "kind": { "type": "string", "minLength": 1 },
+                "timeout_ms": { "type": "integer", "minimum": 1 },
+                "args": { "type": "object" },
+                "locator": { "type": "object" },
+                "fallback": { "type": "array" },
+                "log_policy": { "enum": ["normal", "redact"] }
+              },
+              "additionalProperties": true
+            }
+          },
+          "success_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "object" }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,115 @@
+{
+  "$schema": "../schema/shadow-profile.schema.json",
+  "profile_version": "0.1",
+  "profile_id": "windows.chrome.learning-demo",
+  "kind": "external_ui_adapter",
+  "status": "draft",
+  "application": {
+    "id": "com.google.chrome",
+    "name": "Google Chrome",
+    "platform": "windows",
+    "observed_version": "150.0.7871.101",
+    "discovery": {
+      "process_names": ["chrome.exe"],
+      "executable_candidates": [
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+        "%LOCALAPPDATA%/Google/Chrome/Application/chrome.exe"
+      ],
+      "window": {
+        "control_type": "Window",
+        "title_regex": ".+ - Google Chrome$"
+      }
+    }
+  },
+  "actions": {
+    "browser.open_url": {
+      "title": "打开网址",
+      "description": "启动或聚焦 Chrome，在当前窗口中打开给定网址。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "要打开的 http/https URL"
+          }
+        },
+        "required": ["url"],
+        "additionalProperties": false
+      },
+      "risk": "low",
+      "confirmation": "never",
+      "preconditions": [
+        "URL scheme is http or https",
+        "Chrome executable or running process can be discovered"
+      ],
+      "steps": [
+        {
+          "id": "launch_or_focus",
+          "kind": "app.launch_or_focus",
+          "timeout_ms": 10000,
+          "args": {
+            "process_names": ["chrome.exe"],
+            "executable_candidates": [
+              "C:/Program Files/Google/Chrome/Application/chrome.exe",
+              "%LOCALAPPDATA%/Google/Chrome/Application/chrome.exe"
+            ]
+          }
+        },
+        {
+          "id": "wait_for_window",
+          "kind": "window.wait",
+          "timeout_ms": 10000,
+          "locator": {
+            "process": "chrome.exe",
+            "control_type": "Window"
+          }
+        },
+        {
+          "id": "focus_address_bar",
+          "kind": "keyboard.shortcut",
+          "args": { "keys": ["CTRL", "L"] },
+          "fallback": [
+            {
+              "kind": "uia.focus",
+              "locator": {
+                "control_type": "Edit",
+                "name_any": ["地址和搜索栏", "Address and search bar"]
+              }
+            }
+          ]
+        },
+        {
+          "id": "type_url",
+          "kind": "keyboard.type",
+          "args": { "text": "${url}", "replace_existing": true },
+          "log_policy": "redact"
+        },
+        {
+          "id": "navigate",
+          "kind": "keyboard.press",
+          "args": { "key": "ENTER" }
+        },
+        {
+          "id": "wait_for_navigation",
+          "kind": "window.observe_change",
+          "timeout_ms": 15000,
+          "args": { "signals": ["title", "document_busy"] }
+        }
+      ],
+      "success_evidence": [
+        {
+          "kind": "window.exists",
+          "process": "chrome.exe"
+        },
+        {
+          "kind": "browser.address_matches",
+          "expected": "${url}",
+          "normalization": "ignore_trailing_slash"
+        }
+      ],
+      "learned_from": []
+    }
+  }
+}

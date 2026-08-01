@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# 录制内容可能包含屏幕和隐私信息，默认永不提交。
+recordings/*
+!recordings/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
