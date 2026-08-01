@@ -32,7 +32,7 @@ class RuntimePathTests(unittest.TestCase):
             (Path(directory) / "portable.mode").touch()
             self.assertEqual(
                 data_root(frozen=True, executable=executable, env={}),
-                Path(directory) / "data",
+                (Path(directory) / "data").resolve(),
             )
 
     def test_installed_build_uses_local_app_data(self) -> None:
