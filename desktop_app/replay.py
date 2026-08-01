@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from desktop_app import windows
+from desktop_app import uia, windows
 from shared.profile import ProfileError, resolve_action, validate_profile
 
 
@@ -18,6 +18,9 @@ class ReplayEngine:
 
     def cancel(self) -> None:
         self.cancelled.set()
+
+    def reset(self) -> None:
+        self.cancelled.clear()
 
     def _wait(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
@@ -39,26 +42,43 @@ class ReplayEngine:
         inputs: dict[str, str],
         execute: bool,
         progress: Callable[[str], None] | None = None,
+        confirmed_effect_step_id: str | None = None,
+        start_step_id: str | None = None,
     ) -> dict[str, Any]:
-        self.cancelled.clear()
         errors = validate_profile(profile)
         if errors:
             raise ProfileError("; ".join(errors))
         action_id = self._action_id(profile)
         action = resolve_action(profile, action_id, inputs)
-        steps = action["steps"]
+        all_steps = action["steps"]
+        steps = all_steps
+        if start_step_id:
+            start_indexes = [
+                index for index, step in enumerate(all_steps) if step["id"] == start_step_id
+            ]
+            if not start_indexes:
+                raise ProfileError(f"找不到待确认步骤: {start_step_id}")
+            steps = all_steps[start_indexes[0] :]
         if not execute:
+            effects = [
+                {"step_id": step["id"], **step["effect"]}
+                for step in all_steps
+                if isinstance(step.get("effect"), dict)
+            ]
             return {
                 "ok": True,
                 "mode": "plan_only",
                 "action_id": action_id,
-                "step_count": len(steps),
+                "step_count": len(all_steps),
                 "required_inputs": list(inputs),
+                "effects_requiring_confirmation": effects,
                 "executed": False,
             }
 
         started = time.monotonic()
         degraded: list[str] = []
+        locator_results: list[dict[str, str]] = []
+        executed_step_count = 0
         previous_offset = 0
         for index, step in enumerate(steps, 1):
             if self.cancelled.is_set():
@@ -69,6 +89,21 @@ class ReplayEngine:
             previous_offset = offset
             if progress:
                 progress(f"{index}/{len(steps)}  {step.get('description', step['kind'])}")
+
+            effect = step.get("effect")
+            if isinstance(effect, dict) and step["id"] != confirmed_effect_step_id:
+                return {
+                    "ok": False,
+                    "mode": "awaiting_confirmation",
+                    "action_id": action_id,
+                    "step_count": len(all_steps),
+                    "executed_step_count": executed_step_count,
+                    "executed": bool(executed_step_count),
+                    "pending_effect": {"step_id": step["id"], **effect},
+                    "degraded_steps": degraded,
+                    "locator_results": locator_results,
+                    "error": "已停在最终对外动作前，等待当下确认",
+                }
 
             locator = step.get("locator", {})
             window_locator = locator.get("window", {})
@@ -82,22 +117,51 @@ class ReplayEngine:
 
             kind = step["kind"]
             if kind == "pointer.click":
-                x, y, used_fallback = windows.point_for_window(
-                    hwnd,
-                    locator.get("relative"),
-                    locator.get("fallback_absolute", [0, 0]),
-                )
-                if used_fallback:
-                    degraded.append(step["id"])
+                bounds = None
+                if hwnd and isinstance(locator.get("uia"), dict):
+                    bounds = uia.find_bounds(
+                        hwnd,
+                        locator["uia"],
+                        windows.window_context(hwnd).get("rect"),
+                    )
+                if bounds:
+                    x = round((bounds[0] + bounds[2]) / 2)
+                    y = round((bounds[1] + bounds[3]) / 2)
+                    locator_used = "uia"
+                else:
+                    x, y, used_fallback = windows.point_for_window(
+                        hwnd,
+                        locator.get("relative"),
+                        locator.get("fallback_absolute", [0, 0]),
+                    )
+                    locator_used = "absolute" if used_fallback else "window_relative"
+                    if used_fallback:
+                        degraded.append(step["id"])
+                locator_results.append({"step_id": step["id"], "used": locator_used})
                 windows.click(x, y, step.get("args", {}).get("button", "left"))
             elif kind == "keyboard.shortcut":
+                if hwnd and isinstance(locator.get("uia"), dict):
+                    uia.focus(hwnd, locator["uia"])
                 windows.press_shortcut(list(step.get("args", {}).get("keys", [])))
+                locator_results.append({"step_id": step["id"], "used": "focused_window"})
             elif kind == "keyboard.press":
+                if hwnd and isinstance(locator.get("uia"), dict):
+                    uia.focus(hwnd, locator["uia"])
                 windows.press_key(str(step.get("args", {}).get("key", "")))
+                locator_results.append({"step_id": step["id"], "used": "focused_window"})
             elif kind == "keyboard.type":
+                focused = bool(
+                    hwnd
+                    and isinstance(locator.get("uia"), dict)
+                    and uia.focus(hwnd, locator["uia"])
+                )
                 windows.type_unicode(str(step.get("args", {}).get("text", "")))
+                locator_results.append(
+                    {"step_id": step["id"], "used": "uia_focus" if focused else "focused_window"}
+                )
             else:
                 raise ProfileError(f"尚不支持真实回放步骤: {kind}")
+            executed_step_count += 1
 
         evidence_results: list[dict[str, Any]] = []
         for evidence in action.get("success_evidence", []):
@@ -135,9 +199,11 @@ class ReplayEngine:
             "ok": evidence_ok,
             "mode": "executed",
             "action_id": action_id,
-            "step_count": len(steps),
+            "step_count": len(all_steps),
+            "executed_step_count": executed_step_count,
             "duration_ms": round((time.monotonic() - started) * 1000),
             "degraded_steps": degraded,
+            "locator_results": locator_results,
             "evidence": evidence_results,
             "executed": True,
             "error": None if evidence_ok else "动作已执行，但成功证据未通过",

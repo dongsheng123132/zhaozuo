@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from desktop_app import windows
+from desktop_app import uia, windows
 
 
 try:
@@ -129,6 +129,7 @@ class EventRecorder:
             "key_count": 1,
             "last_key_ms": now,
             "window": context,
+            "uia": uia.snapshot_focused(context.get("rect")),
             "privacy": "redacted",
             "offset_ms": now,
         }
@@ -159,6 +160,7 @@ class EventRecorder:
             "absolute": [x, y],
             "relative": windows.relative_point(x, y, context.get("rect")),
             "window": context,
+            "uia": uia.snapshot_at(x, y, context.get("rect")),
         }
         if screenshot:
             event["screenshot"] = screenshot
@@ -181,6 +183,7 @@ class EventRecorder:
                     "kind": "keyboard.shortcut",
                     "keys": modifiers + [key_name],
                     "window": context,
+                    "uia": uia.snapshot_focused(context.get("rect")),
                 }
             )
             return
@@ -199,6 +202,7 @@ class EventRecorder:
                 "kind": "keyboard.press",
                 "key": windows.VK_NAMES.get(vk, f"VK_{vk}"),
                 "window": context,
+                "uia": uia.snapshot_focused(context.get("rect")),
             }
         )
 

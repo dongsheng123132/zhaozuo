@@ -1,0 +1,162 @@
+{
+  "$schema": "../schema/shadow-profile.schema.json",
+  "profile_version": "0.1",
+  "profile_id": "windows.social-actions.contract-drafts",
+  "kind": "external_ui_adapter",
+  "status": "draft",
+  "application": {
+    "id": "cn.social.desktop-and-web",
+    "name": "微信、微信公众号与抖音动作契约",
+    "platform": "windows",
+    "discovery": {
+      "process_names": ["Weixin.exe", "WeChat.exe", "chrome.exe", "msedge.exe"],
+      "window": {
+        "title_any": ["微信", "WeChat", "微信公众平台", "抖音创作者中心", "抖音"]
+      }
+    }
+  },
+  "actions": {
+    "wechat.reply_message": {
+      "title": "回复一条微信消息",
+      "description": "打开指定会话、填入回复草稿，并在发送动作发生当下等待用户确认。此契约尚未绑定具体微信版本的定位器。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "目标会话；执行日志应最小化记录"
+          },
+          "reply_text": {
+            "type": "string",
+            "description": "回复正文；日志必须遮蔽"
+          }
+        },
+        "required": ["conversation", "reply_text"],
+        "additionalProperties": false
+      },
+      "risk": "high",
+      "confirmation": "before_effect",
+      "steps": [
+        {
+          "id": "open_conversation",
+          "kind": "conversation.open",
+          "args": {"name": "${conversation}"},
+          "log_policy": "redact"
+        },
+        {
+          "id": "fill_reply",
+          "kind": "keyboard.type",
+          "args": {"text": "${reply_text}"},
+          "log_policy": "redact"
+        },
+        {
+          "id": "send_reply",
+          "kind": "ui.effect",
+          "effect": {
+            "type": "representational_communication",
+            "kind": "send_message",
+            "label": "发送微信回复",
+            "confirmation": "always"
+          }
+        }
+      ],
+      "success_evidence": [
+        {
+          "kind": "message.outgoing_visible",
+          "conversation": "${conversation}",
+          "content_hash_of": "${reply_text}"
+        }
+      ],
+      "learned_from": []
+    },
+    "wechat_official.publish_article": {
+      "title": "发布微信公众号文章",
+      "description": "优先选择官方接口；仅在接口不覆盖时使用浏览器 Shadow Profile。自动填写后停在发布前等待确认。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "content_path": {"type": "string"},
+          "cover_path": {"type": "string"}
+        },
+        "required": ["title", "content_path", "cover_path"],
+        "additionalProperties": false
+      },
+      "risk": "high",
+      "confirmation": "before_effect",
+      "steps": [
+        {
+          "id": "prefer_official_api",
+          "kind": "integration.prefer_official_api"
+        },
+        {
+          "id": "prepare_article",
+          "kind": "content.prepare",
+          "args": {
+            "title": "${title}",
+            "content_path": "${content_path}",
+            "cover_path": "${cover_path}"
+          },
+          "log_policy": "redact"
+        },
+        {
+          "id": "publish_article",
+          "kind": "ui.effect",
+          "effect": {
+            "type": "representational_communication",
+            "kind": "publish_content",
+            "label": "发布公众号文章",
+            "confirmation": "always"
+          }
+        }
+      ],
+      "success_evidence": [
+        {
+          "kind": "publication.status",
+          "expected": "published",
+          "title": "${title}"
+        }
+      ],
+      "learned_from": []
+    },
+    "douyin.like_video": {
+      "title": "点赞指定抖音视频",
+      "description": "定位用户指定的视频并停在点赞前；不支持批量养号、随机点赞或绕过平台限制。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "video_url": {"type": "string", "format": "uri"}
+        },
+        "required": ["video_url"],
+        "additionalProperties": false
+      },
+      "risk": "high",
+      "confirmation": "before_effect",
+      "steps": [
+        {
+          "id": "open_video",
+          "kind": "browser.open_url",
+          "args": {"url": "${video_url}"}
+        },
+        {
+          "id": "like_video",
+          "kind": "ui.effect",
+          "effect": {
+            "type": "representational_communication",
+            "kind": "social_reaction",
+            "label": "点赞这条视频",
+            "confirmation": "always"
+          }
+        }
+      ],
+      "success_evidence": [
+        {
+          "kind": "control.toggle_state",
+          "control": "like",
+          "expected": true
+        }
+      ],
+      "learned_from": []
+    }
+  }
+}

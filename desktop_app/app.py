@@ -12,7 +12,12 @@ from tkinter import messagebox
 
 from desktop_app.capture import EventRecorder, ImageGrab
 from desktop_app.replay import ReplayEngine
-from desktop_app.workflow import build_profile, event_summary, save_recording
+from desktop_app.workflow import (
+    build_profile,
+    classify_effect,
+    event_summary,
+    save_recording,
+)
 from shared.profile import ProfileError
 
 
@@ -48,6 +53,8 @@ class ZhaozuoApp:
         self.profile: dict | None = None
         self.paths: dict[str, Path] = {}
         self.replay = ReplayEngine()
+        self.pending_effect_step_id: str | None = None
+        self.pending_effect_label = ""
         self.worker_messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self._drag_origin: tuple[int, int, int, int] | None = None
 
@@ -230,6 +237,19 @@ class ZhaozuoApp:
         if ImageGrab is None:
             screenshot.configure(state="disabled", text="保存步骤截图（未安装 Pillow）")
 
+        self.effect_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            goal_card,
+            text="最后一步会发送 / 发布 / 点赞（执行到按钮前必须再次确认）",
+            variable=self.effect_var,
+            bg=CARD,
+            fg=AMBER,
+            activebackground=CARD,
+            activeforeground=TEXT,
+            selectcolor=CARD_2,
+            font=(FONT, 9),
+        ).pack(anchor="w")
+
         control_row = tk.Frame(goal_card, bg=CARD)
         control_row.pack(fill="x", pady=(12, 0))
         self.record_button = self._button(
@@ -260,7 +280,7 @@ class ZhaozuoApp:
 
         self.steps_text = tk.Text(
             learned_card,
-            height=5,
+            height=4,
             bg="#0f1628",
             fg=TEXT,
             insertbackground=TEXT,
@@ -298,7 +318,7 @@ class ZhaozuoApp:
         )
         self.execute_button.pack(side="left", padx=8)
         self.confirm_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
+        self.confirm_check = tk.Checkbutton(
             row,
             text="我已检查并允许真实键鼠操作",
             variable=self.confirm_var,
@@ -308,7 +328,8 @@ class ZhaozuoApp:
             activeforeground=TEXT,
             selectcolor=CARD_2,
             font=(FONT, 8),
-        ).pack(side="left", padx=4)
+        )
+        self.confirm_check.pack(side="left", padx=4)
         self.report_var = tk.StringVar(value="执行结果会在这里显示")
         tk.Label(
             replay_card,
@@ -395,6 +416,12 @@ class ZhaozuoApp:
             self.status_var.set("正在停止执行…")
 
     def start_recording(self) -> None:
+        if classify_effect(self.goal_var.get()):
+            self.effect_var.set(True)
+        self.pending_effect_step_id = None
+        self.pending_effect_label = ""
+        self.execute_button.configure(text="真实执行")
+        self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
         self.session_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.session_dir = RECORDINGS / self.session_id
         self.recorder = EventRecorder(
@@ -426,6 +453,7 @@ class ZhaozuoApp:
             self.goal_var.get(),
             events,
             self.evidence_var.get(),
+            final_effect=self.effect_var.get(),
         )
         self.paths = save_recording(
             self.session_dir,
@@ -437,6 +465,8 @@ class ZhaozuoApp:
         lines = [f"{index:02d}. {event_summary(event)}" for index, event in enumerate(events, 1)]
         if not lines:
             lines = ["没有捕获到目标软件操作，请重新演示。"]
+        elif self.effect_var.get():
+            lines[-1] += "  ⚠ 最终对外动作"
         self._set_text(self.steps_text, "\n".join(lines))
         placeholders = list(
             next(iter(self.profile["actions"].values()))["input_schema"]["properties"]
@@ -445,8 +475,12 @@ class ZhaozuoApp:
         if placeholders:
             self.inputs_text.insert("1.0", "\n".join(f"{name}=" for name in placeholders))
         self.status_var.set(f"已生成草案 · {len(events)} 步")
-        self.report_var.set(f"已保存：{self.paths['profile']}")
+        self.report_var.set(f"已保存动作草案 · 会话 {self.session_id}")
         self.confirm_var.set(False)
+        self.pending_effect_step_id = None
+        self.pending_effect_label = ""
+        self.execute_button.configure(text="真实执行")
+        self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
         self.show_dashboard()
         self._refresh_pill()
 
@@ -478,6 +512,7 @@ class ZhaozuoApp:
             self.report_var.set("请先录制一个任务")
             return
         try:
+            self.replay.reset()
             self._sync_evidence()
             report = self.replay.run(self.profile, self._inputs(), execute=False)
         except (ProfileError, ValueError) as exc:
@@ -485,7 +520,9 @@ class ZhaozuoApp:
             return
         self.report_var.set(
             f"计划有效：{report['step_count']} 步；需要输入 "
-            f"{', '.join(report['required_inputs']) or '无'}；尚未执行键鼠。"
+            f"{', '.join(report['required_inputs']) or '无'}；"
+            f"最终确认点 {len(report.get('effects_requiring_confirmation', []))} 个；"
+            "尚未执行键鼠。"
         )
 
     def execute_workflow(self) -> None:
@@ -496,6 +533,7 @@ class ZhaozuoApp:
             self.report_var.set("真实执行前，请先检查计划并勾选授权。")
             return
         try:
+            self.replay.reset()
             inputs = self._inputs()
             self._sync_evidence()
             self.replay.run(self.profile, inputs, execute=False)
@@ -508,6 +546,7 @@ class ZhaozuoApp:
         self.status_var.set("3 秒后开始；按 Esc 随时停止")
         self._refresh_pill()
         profile = json.loads(json.dumps(self.profile, ensure_ascii=False))
+        pending_step_id = self.pending_effect_step_id
 
         def worker() -> None:
             try:
@@ -521,6 +560,8 @@ class ZhaozuoApp:
                     inputs,
                     execute=True,
                     progress=lambda text: self.worker_messages.put(("progress", text)),
+                    confirmed_effect_step_id=pending_step_id,
+                    start_step_id=pending_step_id,
                 )
                 self.worker_messages.put(("complete", report))
             except Exception as exc:  # execution boundary: turn all failures into a report
@@ -543,12 +584,34 @@ class ZhaozuoApp:
                 assert isinstance(report, dict)
                 self.state = "idle"
                 self.confirm_var.set(False)
+                if report.get("mode") == "awaiting_confirmation":
+                    effect = report.get("pending_effect") or {}
+                    self.pending_effect_step_id = str(effect.get("step_id", ""))
+                    self.pending_effect_label = str(effect.get("label", "最终对外动作"))
+                    self.status_var.set("已停在最后一步前，等待当下确认")
+                    self.execute_button.configure(text=f"确认{self.pending_effect_label}")
+                    self.confirm_check.configure(
+                        text=f"我确认现在执行：{self.pending_effect_label}"
+                    )
+                    self.report_var.set(
+                        f"前置步骤已执行 {report.get('executed_step_count', 0)} 步；"
+                        f"尚未执行“{self.pending_effect_label}”。请检查目标、内容和账号后再确认。"
+                    )
+                    self.show_dashboard()
+                    self._refresh_pill()
+                    continue
+                self.pending_effect_step_id = None
+                self.pending_effect_label = ""
+                self.execute_button.configure(text="真实执行")
+                self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
                 self.status_var.set("执行完成" if report.get("ok") else "执行后证据未通过")
                 degraded = report.get("degraded_steps") or []
+                locator_results = report.get("locator_results") or []
+                uia_count = sum(1 for item in locator_results if item.get("used") == "uia")
                 self.report_var.set(
                     f"执行 {'成功' if report.get('ok') else '未验证成功'} · "
                     f"{report.get('step_count')} 步 · {report.get('duration_ms')}ms · "
-                    f"坐标兜底 {len(degraded)} 步"
+                    f"UIA 命中 {uia_count} 步 · 坐标兜底 {len(degraded)} 步"
                 )
                 self.show_dashboard()
                 self._refresh_pill()
