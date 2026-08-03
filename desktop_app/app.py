@@ -58,6 +58,7 @@ class ZhaozuoApp:
         self.replay = ReplayEngine()
         self.pending_effect_step_id: str | None = None
         self.pending_effect_label = ""
+        self.pending_target_fingerprint = ""
         self.worker_messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self._drag_origin: tuple[int, int, int, int] | None = None
 
@@ -509,6 +510,22 @@ class ZhaozuoApp:
             self.replay.cancel()
             self.status_var.set("正在停止执行…")
 
+    @staticmethod
+    def _describe_target(target: dict) -> str:
+        """人能读懂的目标身份。空字段不编造，直接说不知道。"""
+
+        if not target:
+            return "未解析到目标窗口"
+        title = str(target.get("title") or "").strip() or "(无标题)"
+        process = str(target.get("process") or "").strip() or "进程未知"
+        confidence = target.get("confidence") or "unknown"
+        note = ""
+        if target.get("ambiguous"):
+            note = f"⚠ 有 {target.get('candidates')} 个同名候选"
+        elif confidence == "weak":
+            note = "⚠ 仅靠标题匹配"
+        return f"{title}（{process}，身份 {confidence}）{note}".strip()
+
     def continue_recording(self) -> None:
         if not self.profile or not self.recorded_events:
             self.report_var.set("请先完成第一段演示，再继续补录。")
@@ -520,6 +537,7 @@ class ZhaozuoApp:
             self.effect_var.set(True)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
+        self.pending_target_fingerprint = ""
         self.execute_button.configure(text="真实执行")
         self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
         self.recording_mode = "append" if append else "new"
@@ -621,6 +639,7 @@ class ZhaozuoApp:
         self.confirm_var.set(False)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
+        self.pending_target_fingerprint = ""
         self.execute_button.configure(text="真实执行")
         self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
         self.show_dashboard()
@@ -689,6 +708,7 @@ class ZhaozuoApp:
         self._refresh_pill()
         profile = json.loads(json.dumps(self.profile, ensure_ascii=False))
         pending_step_id = self.pending_effect_step_id
+        confirmed_target = self.pending_target_fingerprint
 
         def worker() -> None:
             try:
@@ -704,6 +724,7 @@ class ZhaozuoApp:
                     progress=lambda text: self.worker_messages.put(("progress", text)),
                     confirmed_effect_step_id=pending_step_id,
                     start_step_id=pending_step_id,
+                    confirmed_target=confirmed_target or None,
                 )
                 self.worker_messages.put(("complete", report))
             except Exception as exc:  # execution boundary: turn all failures into a report
@@ -728,22 +749,46 @@ class ZhaozuoApp:
                 self.confirm_var.set(False)
                 if report.get("mode") == "awaiting_confirmation":
                     effect = report.get("pending_effect") or {}
+                    target = report.get("target") or {}
                     self.pending_effect_step_id = str(effect.get("step_id", ""))
                     self.pending_effect_label = str(effect.get("label", "最终对外动作"))
+                    # 人要确认的是"发给谁"，不只是"要不要发"。目标写进确认文案本身。
+                    self.pending_target_fingerprint = str(target.get("fingerprint", ""))
+                    target_text = self._describe_target(target)
                     self.status_var.set("已停在最后一步前，等待当下确认")
                     self.execute_button.configure(text=f"确认{self.pending_effect_label}")
                     self.confirm_check.configure(
-                        text=f"我确认现在执行：{self.pending_effect_label}"
+                        text=f"我确认现在执行：{self.pending_effect_label} → {target_text}"
                     )
                     self.report_var.set(
                         f"前置步骤已执行 {report.get('executed_step_count', 0)} 步；"
-                        f"尚未执行“{self.pending_effect_label}”。请检查目标、内容和账号后再确认。"
+                        f"尚未执行“{self.pending_effect_label}”。\n"
+                        f"目标：{target_text}\n"
+                        f"请确认目标、内容和账号无误后再继续。"
                     )
+                    self.show_dashboard()
+                    self._refresh_pill()
+                    continue
+                if report.get("mode") == "target_unverified":
+                    # 拒绝执行不是失败，是守卫生效。文案必须让人看懂为什么被拦。
+                    target = report.get("target") or {}
+                    self.status_var.set("已拒绝执行对外动作")
+                    self.report_var.set(
+                        f"{report.get('error', '目标无法确认')}\n"
+                        f"解析到的目标：{self._describe_target(target)}\n"
+                        f"请让目标窗口处于确定状态后重试，或重新录制带进程身份的档案。"
+                    )
+                    self.execute_button.configure(text="真实执行")
+                    self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
+                    self.pending_effect_step_id = None
+                    self.pending_effect_label = ""
+                    self.pending_target_fingerprint = ""
                     self.show_dashboard()
                     self._refresh_pill()
                     continue
                 self.pending_effect_step_id = None
                 self.pending_effect_label = ""
+                self.pending_target_fingerprint = ""
                 self.execute_button.configure(text="真实执行")
                 self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
                 self.status_var.set("执行完成" if report.get("ok") else "执行后证据未通过")
