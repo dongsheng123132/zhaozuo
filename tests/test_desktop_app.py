@@ -285,6 +285,34 @@ class DesktopWorkflowTests(unittest.TestCase):
         self.assertNotIn("effect", action["steps"][-2])
         self.assertEqual(action["steps"][-1]["effect"]["kind"], "send_message")
 
+    @staticmethod
+    def _match(confidence: str = "exact", ambiguous: bool = False, hwnd: int | None = 123,
+               title: str = "示例窗口") -> dict:
+        return {
+            "hwnd": hwnd,
+            "confidence": confidence,
+            "ambiguous": ambiguous,
+            "candidates": 2 if ambiguous else 1,
+            "reasons": [],
+            "context": {
+                "hwnd": hwnd, "title": title,
+                "class_name": "Example", "process": "demo.exe",
+                "rect": [0, 0, 800, 600],
+            },
+        }
+
+    def _replay_harness(self, engine: ReplayEngine, match: dict):
+        return (
+            patch("desktop_app.replay.windows.resolve_window", return_value=match),
+            patch("desktop_app.replay.windows.activate_window", return_value=True),
+            patch("desktop_app.replay.windows.window_context",
+                  return_value={"rect": [0, 0, 800, 600]}),
+            patch("desktop_app.replay.uia.find_bounds", return_value=[10, 10, 30, 30]),
+            patch.object(engine, "_wait", return_value=None),
+            patch("desktop_app.replay.windows.visible_window_titles",
+                  return_value=["计算器"]),
+        )
+
     def test_replay_stops_before_final_effect_then_resumes_only_that_step(self) -> None:
         profile = build_profile(
             "session-3",
@@ -293,18 +321,16 @@ class DesktopWorkflowTests(unittest.TestCase):
             "计算器",
         )
         engine = ReplayEngine()
-        with patch("desktop_app.replay.windows.find_window", return_value=123), patch(
-            "desktop_app.replay.windows.activate_window", return_value=True
-        ), patch("desktop_app.replay.windows.window_context", return_value={"rect": [0, 0, 800, 600]}), patch(
-            "desktop_app.replay.uia.find_bounds", return_value=[10, 10, 30, 30]
-        ), patch("desktop_app.replay.windows.click") as click, patch.object(
-            engine, "_wait", return_value=None
-        ), patch(
-            "desktop_app.replay.windows.visible_window_titles", return_value=["计算器"]
-        ):
+        patches = self._replay_harness(engine, self._match())
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patch(
+            "desktop_app.replay.windows.click"
+        ) as click:
             pending = engine.run(profile, {}, execute=True)
             self.assertEqual(pending["mode"], "awaiting_confirmation")
             click.assert_not_called()
+            # 确认界面必须告诉人"发给谁"，而不只是"要不要发"。
+            self.assertEqual(pending["target"]["process"], "demo.exe")
+            self.assertTrue(pending["target"]["fingerprint"])
 
             step_id = pending["pending_effect"]["step_id"]
             complete = engine.run(
@@ -313,10 +339,77 @@ class DesktopWorkflowTests(unittest.TestCase):
                 execute=True,
                 confirmed_effect_step_id=step_id,
                 start_step_id=step_id,
+                confirmed_target=pending["target"]["fingerprint"],
             )
             self.assertTrue(complete["ok"])
             click.assert_called_once_with(20, 20, "left")
             self.assertEqual(complete["locator_results"][0]["used"], "uia")
+
+    def test_outward_action_refuses_ambiguous_or_weak_or_changed_target(self) -> None:
+        """标题子串匹配 + 取第一个命中 = 把消息发给同名的另一个窗口。"""
+
+        profile = build_profile("session-4", "给抖音视频点赞", [self.events[0]], "计算器")
+        step_id = "step_001"
+
+        cases = {
+            "ambiguous": self._match(ambiguous=True),
+            "weak": self._match(confidence="weak"),
+            "missing": self._match(hwnd=None),
+        }
+        for name, match in cases.items():
+            with self.subTest(case=name):
+                engine = ReplayEngine()
+                patches = self._replay_harness(engine, match)
+                with patches[0], patches[1], patches[2], patches[3], patches[4], patches[
+                    5
+                ], patch("desktop_app.replay.windows.click") as click:
+                    report = engine.run(
+                        profile, {}, execute=True,
+                        confirmed_effect_step_id=step_id, start_step_id=step_id,
+                    )
+                self.assertEqual(report["mode"], "target_unverified")
+                self.assertFalse(report["ok"])
+                click.assert_not_called()
+
+        # 人确认的是 A 窗口，动手时前台已经变成 B —— 必须拒绝，不能顺手发出去。
+        engine = ReplayEngine()
+        patches = self._replay_harness(engine, self._match(title="另一个会话"))
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patch(
+            "desktop_app.replay.windows.click"
+        ) as click:
+            report = engine.run(
+                profile, {}, execute=True,
+                confirmed_effect_step_id=step_id, start_step_id=step_id,
+                confirmed_target="demo.exe|example|我确认的那个会话",
+            )
+        self.assertEqual(report["mode"], "target_unverified")
+        self.assertIn("目标窗口已经变了", report["error"])
+        click.assert_not_called()
+
+    def test_window_scoring_rejects_same_named_window_of_another_app(self) -> None:
+        recorded = {"title": "微信", "class_name": "WeChatMainWndForPC", "process": "wechat.exe"}
+
+        # 浏览器里打开的微信网页：标题命中，但进程和类名都对不上 -> 直接否决。
+        self.assertIsNone(
+            windows.score_window_candidate(
+                recorded,
+                {"title": "微信读书 - Google Chrome", "class_name": "Chrome_WidgetWin_1",
+                 "process": "chrome.exe"},
+            )
+        )
+        # 同一个软件、标题变了（换了会话）：仍然可信。
+        strong = windows.score_window_candidate(
+            recorded,
+            {"title": "张总", "class_name": "WeChatMainWndForPC", "process": "wechat.exe"},
+        )
+        self.assertIsNotNone(strong)
+        self.assertGreaterEqual(strong[0], 7)
+        # 旧档案没有 process 字段：靠类名+标题仍能强匹配，不因升级而失效。
+        legacy = windows.score_window_candidate(
+            {"title": "微信", "class_name": "WeChatMainWndForPC"},
+            {"title": "微信", "class_name": "WeChatMainWndForPC", "process": "wechat.exe"},
+        )
+        self.assertEqual(legacy[0], 6)
 
     def test_session_files_are_written_together(self) -> None:
         profile = build_profile("session-1", "搜索客户", self.events, "")

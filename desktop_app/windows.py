@@ -11,6 +11,21 @@ if not hasattr(ctypes, "windll"):
 
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+# 64 位下句柄是指针，ctypes 默认 restype=c_int 会截断。显式声明才安全。
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPWSTR,
+    ctypes.POINTER(wintypes.DWORD),
+]
 
 SW_RESTORE = 9
 MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -120,10 +135,53 @@ def cursor_position() -> tuple[int, int]:
     return point.x, point.y
 
 
+_PROCESS_CACHE: dict[int, str] = {}
+_PROCESS_CACHE_LIMIT = 512
+
+
+def process_name(hwnd: int) -> str:
+    """Owning executable name of a window, lowercased, e.g. ``wechat.exe``.
+
+    进程名是窗口身份里最可靠的一条证据：标题会随文件名和会话变，类名会随
+    框架版本变，进程名基本不变。拿不到时返回空字符串（权限不足、进程已退出、
+    或目标是更高完整性级别的进程），调用方必须把空值当成"不知道"，不是"不匹配"。
+    """
+
+    handle_key = int(hwnd or 0)
+    if not handle_key:
+        return ""
+    cached = _PROCESS_CACHE.get(handle_key)
+    if cached is not None:
+        return cached
+
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(handle_key, ctypes.byref(pid))
+    name = ""
+    if pid.value:
+        process = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
+        )
+        if process:
+            try:
+                size = wintypes.DWORD(260)
+                buffer = ctypes.create_unicode_buffer(size.value)
+                if kernel32.QueryFullProcessImageNameW(
+                    process, 0, buffer, ctypes.byref(size)
+                ):
+                    name = buffer.value.replace("/", "\\").rsplit("\\", 1)[-1].lower()
+            finally:
+                kernel32.CloseHandle(process)
+
+    if len(_PROCESS_CACHE) >= _PROCESS_CACHE_LIMIT:
+        _PROCESS_CACHE.clear()
+    _PROCESS_CACHE[handle_key] = name
+    return name
+
+
 def window_context(hwnd: int | None = None) -> dict[str, Any]:
     handle = int(hwnd or user32.GetForegroundWindow())
     if not handle:
-        return {"hwnd": 0, "title": "", "class_name": "", "rect": None}
+        return {"hwnd": 0, "title": "", "class_name": "", "process": "", "rect": None}
 
     length = user32.GetWindowTextLengthW(handle)
     title_buffer = ctypes.create_unicode_buffer(length + 1)
@@ -136,6 +194,7 @@ def window_context(hwnd: int | None = None) -> dict[str, Any]:
         "hwnd": handle,
         "title": title_buffer.value,
         "class_name": class_buffer.value,
+        "process": process_name(handle),
         "rect": [rect.left, rect.top, rect.right, rect.bottom] if has_rect else None,
     }
 
@@ -168,19 +227,110 @@ def _enumerate_windows() -> list[int]:
     return found
 
 
-def find_window(title: str, class_name: str = "") -> int | None:
-    title_folded = title.casefold().strip()
-    best_partial: int | None = None
+#: 分数阈值。process 是最强证据，title 子串是最弱证据。
+_SCORE_PROCESS = 4
+_SCORE_CLASS = 3
+_SCORE_TITLE_EXACT = 3
+_SCORE_TITLE_PARTIAL = 1
+_CONFIDENCE_EXACT = 7
+_CONFIDENCE_STRONG = 4
+
+
+def score_window_candidate(
+    recorded: dict[str, Any], candidate: dict[str, Any]
+) -> tuple[int, list[str]] | None:
+    """Score one live window against a recorded window locator.
+
+    返回 None 表示被否决 —— 进程或类名明确对不上，不是"弱匹配"而是"另一个软件"。
+    否决比打低分重要：旧实现用标题子串找"微信"，会命中浏览器里打开的微信网页、
+    文件传输助手、任何标题含"微信"的窗口，而最后一步是回车发送。
+    """
+
+    def norm(value: Any) -> str:
+        return str(value or "").strip().casefold()
+
+    recorded_process, candidate_process = norm(recorded.get("process")), norm(candidate.get("process"))
+    recorded_class, candidate_class = norm(recorded.get("class_name")), norm(candidate.get("class_name"))
+    recorded_title, candidate_title = norm(recorded.get("title")), norm(candidate.get("title"))
+
+    if recorded_process and candidate_process and recorded_process != candidate_process:
+        return None
+    if recorded_class and candidate_class and recorded_class != candidate_class:
+        return None
+
+    score = 0
+    reasons: list[str] = []
+    if recorded_process and recorded_process == candidate_process:
+        score += _SCORE_PROCESS
+        reasons.append(f"process={candidate_process}")
+    if recorded_class and recorded_class == candidate_class:
+        score += _SCORE_CLASS
+        reasons.append(f"class={candidate_class}")
+    if recorded_title and recorded_title == candidate_title:
+        score += _SCORE_TITLE_EXACT
+        reasons.append("title=exact")
+    elif recorded_title and candidate_title and (
+        recorded_title in candidate_title or candidate_title in recorded_title
+    ):
+        score += _SCORE_TITLE_PARTIAL
+        reasons.append("title=partial")
+
+    return (score, reasons) if score else None
+
+
+def resolve_window(recorded: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a recorded window locator to exactly one live window.
+
+    与旧的 find_window 的关键差别：**歧义会被报出来，而不是默默取第一个**。
+    高风险步骤宁可拒绝执行，也不能对着不确定的窗口按回车。
+    """
+
+    scored: list[tuple[int, int, dict[str, Any], list[str]]] = []
     for hwnd in _enumerate_windows():
         context = window_context(hwnd)
-        if class_name and context["class_name"] != class_name:
-            continue
-        candidate = str(context["title"])
-        if candidate.casefold() == title_folded and title_folded:
-            return hwnd
-        if title_folded and title_folded in candidate.casefold():
-            best_partial = best_partial or hwnd
-    return best_partial
+        result = score_window_candidate(recorded, context)
+        if result:
+            scored.append((result[0], hwnd, context, result[1]))
+
+    if not scored:
+        return {
+            "hwnd": None, "confidence": "none", "ambiguous": False,
+            "candidates": 0, "reasons": ["no_window_matched"], "context": None,
+        }
+
+    top_score = max(item[0] for item in scored)
+    winners = [item for item in scored if item[0] == top_score]
+    score, hwnd, context, reasons = winners[0]
+    confidence = (
+        "exact" if score >= _CONFIDENCE_EXACT
+        else "strong" if score >= _CONFIDENCE_STRONG
+        else "weak"
+    )
+    return {
+        "hwnd": hwnd,
+        "confidence": confidence,
+        "ambiguous": len(winners) > 1,
+        "candidates": len(winners),
+        "reasons": reasons + ([f"tied_candidates={len(winners)}"] if len(winners) > 1 else []),
+        "context": context,
+    }
+
+
+def target_fingerprint(context: dict[str, Any] | None) -> str:
+    """Stable identity string shown to the human and re-checked before the effect."""
+
+    if not context:
+        return ""
+    return "|".join(
+        str(context.get(key) or "").strip().casefold()
+        for key in ("process", "class_name", "title")
+    )
+
+
+def find_window(title: str, class_name: str = "") -> int | None:
+    """Backwards-compatible lookup. 新代码请用 resolve_window。"""
+
+    return resolve_window({"title": title, "class_name": class_name})["hwnd"]
 
 
 def activate_window(hwnd: int) -> bool:

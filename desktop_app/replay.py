@@ -39,6 +39,41 @@ class ReplayEngine:
             raise ProfileError("录制演示 Profile 必须恰好包含一个动作")
         return next(iter(actions))
 
+    #: 对外动作只接受这两档窗口身份。weak（仅标题子串命中）不够 —— 那正是
+    #: "把消息发给同名的另一个窗口"的入口。
+    TRUSTED_TARGET_CONFIDENCE = frozenset({"exact", "strong"})
+
+    @staticmethod
+    def _target_report(match: dict[str, Any]) -> dict[str, Any]:
+        context = match.get("context") or {}
+        return {
+            "title": context.get("title", ""),
+            "process": context.get("process", ""),
+            "class_name": context.get("class_name", ""),
+            "confidence": match.get("confidence"),
+            "ambiguous": match.get("ambiguous", False),
+            "candidates": match.get("candidates", 0),
+            "reasons": match.get("reasons", []),
+            "fingerprint": windows.target_fingerprint(match.get("context")),
+        }
+
+    @classmethod
+    def _target_refusal(
+        cls, match: dict[str, Any], confirmed_target: str | None
+    ) -> str | None:
+        """Why this outward action must not fire. None 表示目标可信。"""
+
+        if not match.get("hwnd"):
+            return "找不到目标窗口"
+        if match.get("ambiguous"):
+            return f"目标窗口不唯一，有 {match.get('candidates')} 个同分候选"
+        if match.get("confidence") not in cls.TRUSTED_TARGET_CONFIDENCE:
+            return f"窗口身份证据不足（{match.get('confidence')}），无法确定是同一个目标"
+        if confirmed_target and windows.target_fingerprint(match.get("context")) != confirmed_target:
+            # 人确认的是 A 窗口，真要动手时前台变成了 B —— 这一步必须失败，不能顺手发出去。
+            return "确认之后目标窗口已经变了"
+        return None
+
     @classmethod
     def replay_delay(cls, previous_offset_ms: int, offset_ms: int) -> float:
         """Preserve UI settle time while bounding accidental long pauses."""
@@ -57,6 +92,7 @@ class ReplayEngine:
         progress: Callable[[str], None] | None = None,
         confirmed_effect_step_id: str | None = None,
         start_step_id: str | None = None,
+        confirmed_target: str | None = None,
     ) -> dict[str, Any]:
         errors = validate_profile(profile)
         if errors:
@@ -103,27 +139,44 @@ class ReplayEngine:
             if progress:
                 progress(f"{index}/{len(steps)}  {step.get('description', step['kind'])}")
 
-            effect = step.get("effect")
-            if isinstance(effect, dict) and step["id"] != confirmed_effect_step_id:
-                return {
-                    "ok": False,
-                    "mode": "awaiting_confirmation",
-                    "action_id": action_id,
-                    "step_count": len(all_steps),
-                    "executed_step_count": executed_step_count,
-                    "executed": bool(executed_step_count),
-                    "pending_effect": {"step_id": step["id"], **effect},
-                    "degraded_steps": degraded,
-                    "locator_results": locator_results,
-                    "error": "已停在最终对外动作前，等待当下确认",
-                }
-
             locator = step.get("locator", {})
             window_locator = locator.get("window", {})
-            hwnd = windows.find_window(
-                str(window_locator.get("title", "")),
-                str(window_locator.get("class_name", "")),
-            )
+            match = windows.resolve_window(window_locator)
+            hwnd = match["hwnd"]
+
+            effect = step.get("effect")
+            if isinstance(effect, dict):
+                if step["id"] != confirmed_effect_step_id:
+                    # 人要确认的不是"要不要发"，是"发给谁"。把解析出的目标一并交出去。
+                    return {
+                        "ok": False,
+                        "mode": "awaiting_confirmation",
+                        "action_id": action_id,
+                        "step_count": len(all_steps),
+                        "executed_step_count": executed_step_count,
+                        "executed": bool(executed_step_count),
+                        "pending_effect": {"step_id": step["id"], **effect},
+                        "target": self._target_report(match),
+                        "degraded_steps": degraded,
+                        "locator_results": locator_results,
+                        "error": "已停在最终对外动作前，等待当下确认",
+                    }
+                refusal = self._target_refusal(match, confirmed_target)
+                if refusal:
+                    return {
+                        "ok": False,
+                        "mode": "target_unverified",
+                        "action_id": action_id,
+                        "step_count": len(all_steps),
+                        "executed_step_count": executed_step_count,
+                        "executed": bool(executed_step_count),
+                        "pending_effect": {"step_id": step["id"], **effect},
+                        "target": self._target_report(match),
+                        "degraded_steps": degraded,
+                        "locator_results": locator_results,
+                        "error": f"拒绝执行对外动作：{refusal}",
+                    }
+
             if hwnd:
                 windows.activate_window(hwnd)
                 self._wait(0.08)
