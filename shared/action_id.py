@@ -20,7 +20,11 @@ from hashlib import blake2s
 
 
 #: Namespaced, lowercase, ASCII-only. 至少一个点，避免裸名字污染全局命名空间。
+#: Action ID 是被调用的接口名，按函数命名习惯只收下划线。
 ACTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
+
+#: profile_id 是文档标识而非可调用接口，额外允许连字符。
+PROFILE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+$")
 
 #: 指纹长度。6 个十六进制字符 = 24 bit，单个档案库里撞车概率可以忽略，
 #: 又短到人能在界面上一眼扫过。
@@ -74,6 +78,17 @@ def action_slug(goal: str) -> str:
         # 空目标没有可区分的语义，不假装它是一个独立动作。
         return "unnamed_action"
     return f"{prefix}_{digest}" if prefix else f"task_{digest}"
+
+
+def demo_suffix(goal: str) -> str:
+    """ID segment marking "this instance came from one recorded demonstration".
+
+    ID 每一段必须以字母开头，而指纹可能以数字开头；前缀 d 同时解决语法问题和
+    可读性问题 —— 看到 `wechat.reply_message.d8ab776` 就知道这是演示实例，
+    而不是那个被承诺的规范接口 `wechat.reply_message`。
+    """
+
+    return f"d{goal_digest(goal)}"
 
 
 def derive_action_id(goal: str, namespace: str = "workflow") -> str:

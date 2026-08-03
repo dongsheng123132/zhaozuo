@@ -101,7 +101,7 @@ class DesktopWorkflowTests(unittest.TestCase):
         action_id = next(iter(profile["actions"]))
         action = profile["actions"][action_id]
         # 录制器发实例 ID：效果分类 + 目标指纹。规范 ID 由人在提升时授予。
-        self.assertTrue(action_id.startswith("wechat.reply_message."))
+        self.assertTrue(action_id.startswith("wechat.reply_message.d"))
         self.assertEqual(action["risk"], "high")
         self.assertNotIn("effect", action["steps"][0])
         self.assertEqual(action["steps"][-1]["effect"]["confirmation"], "always")

@@ -21,6 +21,20 @@
 
 外部录制回放**不表示目标软件符合影核协议**。Chrome、WPS 或微信能被照做操作，只代表存在一条受约束的兼容路径。目标软件以后提供正式 CLI、API 或 Action Core 时，档案应优先切换到原生入口。
 
+## 格式：兼容动作档案 v1（已冻结）
+
+档案格式的规范性文档是 **[docs/ACTION-PROFILE-V1.md](docs/ACTION-PROFILE-V1.md)**，Schema 在 [`profiles/schema/action-profile-v1.schema.json`](profiles/schema/action-profile-v1.schema.json)。v1 于 2026-08 冻结，此后只做向后兼容的增补。
+
+格式的重心不在"怎么点"，在三件今天的 GUI Agent 普遍做不到的事：
+
+| 关切 | v1 的回答 |
+|---|---|
+| 这是哪一个业务动作？ | 稳定唯一的 **Action ID**，中文目标同样不撞车 |
+| 这一步会不会造成不可撤销的后果？ | **effect** 声明 + 生效当下确认 + **目标身份断言** |
+| 它成功了吗？ | **success_evidence**，且 `validated` 不得只靠窗口标题 |
+
+校验器会**执行**这些规则，而不只是记录它们：拿不出证据的 `validated` 声明会被拒收（缺兼容范围、无通过回归、无提升人、成功证据过弱、对外动作缺目标断言、只靠绝对坐标定位）。
+
 ## 当前能力
 
 - 捕获 Windows 全局点击、快捷键和输入焦点；

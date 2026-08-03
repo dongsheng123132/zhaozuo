@@ -8,10 +8,11 @@ from typing import Any
 from shared.action_id import (
     derive_action_id,
     derive_profile_id,
-    goal_digest,
+    demo_suffix,
     sanitize_action_id,
 )
 from shared.effects import assess, classify_effect, infer_effect
+from shared.profile import CURRENT_VERSION
 
 
 __all__ = [
@@ -240,6 +241,13 @@ def build_profile(
             ("effect_id" if key == "action_id" else key): value
             for key, value in effect.items()
         }
+        steps[-1]["effect"].setdefault("reversible", False)
+        # 显式写出目标断言，即使全是默认值 —— 档案要能自证"发给谁被断言过"。
+        steps[-1]["target_assertion"] = {
+            "min_confidence": "strong",
+            "require_unique": True,
+            "reconfirm_if_changed": True,
+        }
 
     evidence: list[dict[str, Any]] = []
     if success_title.strip():
@@ -255,13 +263,13 @@ def build_profile(
     # 规范 ID（如 wechat.reply_message）是被承诺的接口，只能由人在提升到
     # validated 时通过 action_id 参数授予，录制器不自封。
     default_action_id = (
-        f"{effect['action_id']}.{goal_digest(goal)}"
+        f"{effect['action_id']}.{demo_suffix(goal)}"
         if should_mark_effect
         else derive_action_id(goal)
     )
     resolved_action_id = sanitize_action_id(action_id, default_action_id)
     return {
-        "profile_version": "0.1",
+        "profile_version": CURRENT_VERSION,
         "profile_id": derive_profile_id(goal),
         "kind": "external_ui_adapter",
         "status": "draft",

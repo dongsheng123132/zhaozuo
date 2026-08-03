@@ -1,6 +1,6 @@
 {
-  "$schema": "../schema/compatibility-action-profile.schema.json",
-  "profile_version": "0.1",
+  "$schema": "../schema/action-profile-v1.schema.json",
+  "profile_version": "1.0",
   "profile_id": "windows.wps-writer.learning-demo",
   "kind": "external_ui_adapter",
   "status": "draft",
@@ -10,7 +10,9 @@
     "platform": "windows",
     "observed_version": "12.1.0.26895",
     "discovery": {
-      "process_names": ["wps.exe"],
+      "process_names": [
+        "wps.exe"
+      ],
       "executable_candidates": [
         "%LOCALAPPDATA%/Kingsoft/WPS Office/12.1.0.26895/office6/wps.exe",
         "%LOCALAPPDATA%/Kingsoft/WPS Office/*/office6/wps.exe",
@@ -39,7 +41,10 @@
             "description": "新文件的绝对路径；第一版拒绝覆盖已有文件"
           }
         },
-        "required": ["content", "output_path"],
+        "required": [
+          "content",
+          "output_path"
+        ],
         "additionalProperties": false
       },
       "risk": "low",
@@ -55,7 +60,9 @@
           "kind": "app.launch_or_focus",
           "timeout_ms": 15000,
           "args": {
-            "process_names": ["wps.exe"],
+            "process_names": [
+              "wps.exe"
+            ],
             "executable_candidates": [
               "%LOCALAPPDATA%/Kingsoft/WPS Office/12.1.0.26895/office6/wps.exe",
               "%LOCALAPPDATA%/Kingsoft/WPS Office/*/office6/wps.exe",
@@ -68,13 +75,26 @@
           "kind": "uia.invoke",
           "timeout_ms": 10000,
           "locator": {
-            "control_type_any": ["Button", "ListItem"],
-            "name_any": ["新建", "空白文档", "New", "Blank document"]
+            "control_type_any": [
+              "Button",
+              "ListItem"
+            ],
+            "name_any": [
+              "新建",
+              "空白文档",
+              "New",
+              "Blank document"
+            ]
           },
           "fallback": [
             {
               "kind": "keyboard.shortcut",
-              "args": { "keys": ["CTRL", "N"] }
+              "args": {
+                "keys": [
+                  "CTRL",
+                  "N"
+                ]
+              }
             }
           ]
         },
@@ -83,20 +103,31 @@
           "kind": "uia.focus",
           "timeout_ms": 10000,
           "locator": {
-            "control_type_any": ["Document", "Edit"],
+            "control_type_any": [
+              "Document",
+              "Edit"
+            ],
             "within_process": "wps.exe"
           }
         },
         {
           "id": "type_content",
           "kind": "keyboard.type",
-          "args": { "text": "${content}" },
+          "args": {
+            "text": "${content}"
+          },
           "log_policy": "redact"
         },
         {
           "id": "open_save_as",
           "kind": "keyboard.shortcut",
-          "args": { "keys": ["CTRL", "SHIFT", "S"] }
+          "args": {
+            "keys": [
+              "CTRL",
+              "SHIFT",
+              "S"
+            ]
+          }
         },
         {
           "id": "wait_for_save_dialog",
@@ -104,7 +135,10 @@
           "timeout_ms": 10000,
           "locator": {
             "control_type": "Window",
-            "name_any": ["另存为", "Save As"]
+            "name_any": [
+              "另存为",
+              "Save As"
+            ]
           }
         },
         {
@@ -112,10 +146,18 @@
           "kind": "uia.set_value",
           "locator": {
             "control_type": "Edit",
-            "automation_id_any": ["1001", "FileNameControlHost"],
-            "name_any": ["文件名", "File name"]
+            "automation_id_any": [
+              "1001",
+              "FileNameControlHost"
+            ],
+            "name_any": [
+              "文件名",
+              "File name"
+            ]
           },
-          "args": { "value": "${output_path}" },
+          "args": {
+            "value": "${output_path}"
+          },
           "log_policy": "normal"
         },
         {
@@ -123,7 +165,10 @@
           "kind": "uia.invoke",
           "locator": {
             "control_type": "Button",
-            "name_any": ["保存", "Save"]
+            "name_any": [
+              "保存",
+              "Save"
+            ]
           }
         }
       ],
