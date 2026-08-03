@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.action_id import ACTION_ID_RE, PROFILE_ID_RE
+from shared.evidence import UNSUPPORTED_KINDS
 
 
 PLACEHOLDER_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
@@ -137,6 +138,21 @@ def _validate_v1(profile: dict[str, Any]) -> list[str]:
     if isinstance(profile_id, str) and not PROFILE_ID_RE.fullmatch(profile_id):
         errors.append(f"profile_id is not a valid namespaced id: {profile_id!r}")
 
+    if status in ("learned", "validated"):
+        demonstrations = 0
+        evidence_block = profile.get("evidence")
+        if isinstance(evidence_block, dict):
+            try:
+                demonstrations = int(evidence_block.get("demonstrations") or 0)
+            except (TypeError, ValueError):
+                demonstrations = 0
+        if demonstrations < 2:
+            errors.append(
+                f"{status} profile must record at least 2 varied demonstrations "
+                "(窗口位置、输入内容、初始状态至少各变过一次)，"
+                f"got evidence.demonstrations={demonstrations}"
+            )
+
     if status == "validated":
         compatibility = profile.get("compatibility")
         if not isinstance(compatibility, dict) or not compatibility.get("app_versions"):
@@ -211,6 +227,15 @@ def _validate_v1(profile: dict[str, Any]) -> list[str]:
         if status in ("learned", "validated") and not evidence_kinds:
             errors.append(
                 f"{prefix}: {status} profile must declare at least one success evidence"
+            )
+        unsupported = evidence_kinds & set(UNSUPPORTED_KINDS)
+        if status == "validated" and unsupported and not (
+            evidence_kinds - WEAK_EVIDENCE_KINDS - set(UNSUPPORTED_KINDS)
+        ):
+            # 只声明了执行器验不了的证据 == 没有可自动回归的证据。
+            errors.append(
+                f"{prefix}: validated profile relies only on evidence this executor "
+                f"cannot check ({sorted(unsupported)})"
             )
         if status == "validated" and not (evidence_kinds - WEAK_EVIDENCE_KINDS):
             errors.append(

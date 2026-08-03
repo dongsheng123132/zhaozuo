@@ -100,7 +100,10 @@ class ProfileContractTests(unittest.TestCase):
                         },
                         "target_assertion": {"min_confidence": "strong"},
                     }],
-                    "success_evidence": [{"kind": "message.outgoing_visible"}],
+                    "success_evidence": [
+                        {"kind": "control.toggle_state",
+                         "locator": {"automation_id": "sent"}, "expected": "on"}
+                    ],
                 }
             },
         }
@@ -153,6 +156,18 @@ class ProfileContractTests(unittest.TestCase):
             "fallback_absolute": [100, 200]
         }
         self.assertIn("absolute", first_error(coords_only))
+
+        # 只声明了执行器验不了的证据 == 没有可自动回归的证据
+        only_unsupported = copy.deepcopy(self._validated())
+        only_unsupported["actions"]["demo.do_thing"]["success_evidence"] = [
+            {"kind": "message.outgoing_visible"}
+        ]
+        self.assertIn("cannot check", first_error(only_unsupported))
+
+        # 演示次数不足（一次坐标录制不能宣称学会了）
+        one_demo = copy.deepcopy(self._validated())
+        one_demo["evidence"]["demonstrations"] = 1
+        self.assertIn("varied demonstrations", first_error(one_demo))
 
         # Action ID 不合语法（中文目标曾经在这里塌陷）
         bad_id = copy.deepcopy(self._validated())

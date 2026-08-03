@@ -11,6 +11,10 @@ build/
 !.env.example
 *.log
 
+# 档案原子写入留下的备份与临时文件
+*.action-profile.json.bak
+*.action-profile.json.tmp
+
 # 录制内容可能包含屏幕和隐私信息，默认永不提交。
 recordings/*
 !recordings/.gitkeep

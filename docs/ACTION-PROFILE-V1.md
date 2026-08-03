@@ -47,14 +47,14 @@
 | status | 含义 | 最低证据 |
 |---|---|---|
 | `draft` | 一次演示的候选，或纯手写假设 | 无。**不得**无人值守执行 |
-| `learned` | 有真实示范支撑，定位器仍可能漂移 | ≥2 次**变化演示**（窗口位置、输入内容、初始状态至少各变过一次）全部通过 |
+| `learned` | 有真实示范支撑，定位器仍可能漂移 | ≥2 次**变化演示**（窗口位置、输入内容、初始状态至少各变过一次）全部通过，记在 `evidence.demonstrations` |
 | `validated` | 在声明范围内通过回归 | 见下 |
 
 `validated` **必须**同时满足：
 
 1. `compatibility` 声明了 app 版本、OS build、DPI 缩放、语言范围；
 2. `evidence.regression_runs` 里在该范围内有通过记录，且 `evidence.promoted_by` 记录了提升人；
-3. `success_evidence` **至少有一条不是** `window.title_contains`（§5）；
+3. `success_evidence` **至少有一条不是** `window.title_contains`，且**至少有一条本执行器能实际检查**（§5）；
 4. 任何步骤**不得**依赖 `locator.fallback_absolute` 作为唯一定位手段；
 5. 含 `effect` 的步骤**必须**带 `target_assertion`（§4）。
 
@@ -118,6 +118,27 @@ title     （窗口标题，随会话和文件名变）
 - `window.title_contains` 是**最弱**的一种：消息发成功和发失败，窗口标题往往完全一样。
   因此 `validated` 档案**必须**至少有一条其它种类的证据。
 - 每条证据**应当**声明 `timeout_ms`。
+- 变化类证据（`file.hash_changed`、`file.modified_since`）**必须**在动作执行**之前**拍基线，
+  否则无从判断变化是不是这次动作造成的。没有基线的变化类证据**必须**判为未通过。
+- 实现**不得**把"检查不了"当成"通过"。未实现或未知的证据种类**必须**判为未通过并注明原因 ——
+  默默放行比没有证据更危险，它看起来像验过了。
+- `validated` **不得**只声明本执行器无法检查的证据种类（那等于没有可自动回归的证据）。
+
+### 提升是操作，不是改字段
+
+`validated` 必须由一条可审计的链产生，而不是手工把 status 改成 `validated`：
+
+```powershell
+# 回归记录只能来自一次真实执行的报告，dry-run 报告会被拒绝
+python -m executor.cli record-run <profile> --report <replay-report.json> `
+  --app-version 16.0.17 --os-build 22631 --dpi-scale 1.5 --locale zh-CN --varied
+
+# 证据不足会被拒绝，且不写文件
+python -m executor.cli promote <profile> --to validated --by <提升人>
+```
+
+`--varied` 是操作者对"这次演示改变了窗口位置/输入/初始状态"的明示断言 ——
+工具无法自证这一点，所以它必须是人显式声明的，并被记录下来。
 
 ---
 

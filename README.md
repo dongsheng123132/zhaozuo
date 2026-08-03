@@ -43,10 +43,11 @@
 - 支持分段补录和应用重启后恢复最近动作；
 - 生成带稳定 Action ID、输入契约、风险和成功证据的候选档案；
 - 按“UIA → 窗口相对位置 → 绝对坐标”逐级回放并报告降级；
-- 发送、发布、点赞等对外动作在最终一步再次确认；
+- 发送、发布、点赞等对外动作在最终一步再次确认，并在执行前断言目标窗口身份；
+- 成功证据引擎覆盖窗口、UIA 值与开关态、文件、剪贴板、进程；验不了的证据种类判为未通过，不默默放行；
 - 默认 dry-run，真实执行必须显式授权，执行中可按 Esc 中止。
 
-尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、跨版本自动回归和代码签名。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
+尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、聊天软件会话流证据、代码签名。录制层仍是 20ms 轮询（无滚轮与拖拽），回放按录制间隔等待而非等状态就绪，且尚未处理 DPI 缩放。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
 
 ## 快速开始
 
@@ -87,6 +88,20 @@ python -m executor.cli plan profiles/chrome/open-url.action-profile.json `
 ```
 
 `plan` 只解析变量并输出执行计划，不控制键盘鼠标。
+
+对着真机跑一遍成功证据（同样不执行任何步骤），以及把一次真实回放记入回归、提升档案状态：
+
+```powershell
+python -m executor.cli evidence <profile> <action> --json
+
+python -m executor.cli record-run <profile> --report <replay-report.json> `
+  --app-version 16.0.17 --dpi-scale 1.5 --varied --json
+
+python -m executor.cli promote <profile> --to validated --by <提升人> --json
+```
+
+`record-run` 拒绝 dry-run 报告，`promote` 在证据不足时拒绝并且不写文件 ——
+`validated` 是一条可审计的链，不是一个能手改的字段。
 
 ## 学习流程
 

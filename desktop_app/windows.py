@@ -26,6 +26,15 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
     wintypes.LPWSTR,
     ctypes.POINTER(wintypes.DWORD),
 ]
+kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalUnlock.restype = wintypes.BOOL
+kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+user32.GetClipboardData.restype = wintypes.HANDLE
+user32.GetClipboardData.argtypes = [wintypes.UINT]
+user32.OpenClipboard.argtypes = [wintypes.HWND]
 
 SW_RESTORE = 9
 MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -412,6 +421,81 @@ def type_unicode(text: str) -> None:
         sent = user32.SendInput(2, batch, ctypes.sizeof(INPUT))
         if sent != 2:
             raise OSError("SendInput 未能发送完整文本")
+
+
+TH32CS_SNAPPROCESS = 0x00000002
+CF_UNICODETEXT = 13
+MAX_PATH = 260
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", wintypes.LONG),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", wintypes.WCHAR * MAX_PATH),
+    ]
+
+
+def count_windows(locator: dict[str, Any]) -> int:
+    """How many live windows match a locator. 用于 window.exists 证据。"""
+
+    return sum(
+        1
+        for hwnd in _enumerate_windows()
+        if score_window_candidate(locator, window_context(hwnd))
+    )
+
+
+def process_names() -> set[str]:
+    """All running process executable names, lowercased.
+
+    走 Toolhelp 快照而不是"有可见窗口的进程"：无窗口的后台服务同样算在运行。
+    """
+
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        return set()
+    names: set[str] = set()
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            while True:
+                names.add(str(entry.szExeFile).lower())
+                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    break
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return names
+
+
+def clipboard_text() -> str:
+    """Current clipboard text, or empty. 打不开剪贴板时返回空而不是抛错。"""
+
+    if not user32.OpenClipboard(None):
+        return ""
+    try:
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return ""
+        pointer = kernel32.GlobalLock(handle)
+        if not pointer:
+            return ""
+        try:
+            return ctypes.wstring_at(pointer)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    except OSError:
+        return ""
+    finally:
+        user32.CloseClipboard()
 
 
 def visible_window_titles() -> list[str]:

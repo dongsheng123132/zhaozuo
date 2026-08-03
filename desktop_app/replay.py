@@ -6,6 +6,8 @@ import time
 from typing import Any, Callable
 
 from desktop_app import uia, windows
+from desktop_app.probe import LiveProbe
+from shared.evidence import capture_baseline, check_all, summarize
 from shared.profile import ProfileError, resolve_action, validate_profile
 
 
@@ -16,8 +18,10 @@ class ReplayEngine:
     MIN_INTER_STEP_WAIT_SECONDS = 0.08
     MAX_INTER_STEP_WAIT_SECONDS = 12.0
 
-    def __init__(self) -> None:
+    def __init__(self, probe: Any | None = None) -> None:
         self.cancelled = threading.Event()
+        # 证据检查的全部系统访问都经过 probe，测试可注入假实现无界面断言。
+        self.probe = probe or LiveProbe()
 
     def cancel(self) -> None:
         self.cancelled.set()
@@ -125,6 +129,8 @@ class ReplayEngine:
             }
 
         started = time.monotonic()
+        # 变化类证据（文件改没改、内容更新没有）必须先拍基线，否则无法归因到本次动作。
+        baseline = capture_baseline(action.get("success_evidence", []))
         degraded: list[str] = []
         locator_results: list[dict[str, str]] = []
         executed_step_count = 0
@@ -229,40 +235,15 @@ class ReplayEngine:
                 raise ProfileError(f"尚不支持真实回放步骤: {kind}")
             executed_step_count += 1
 
-        evidence_results: list[dict[str, Any]] = []
-        for evidence in action.get("success_evidence", []):
-            if evidence.get("kind") != "window.title_contains":
-                continue
-            expected = str(evidence.get("expected", "")).casefold()
-            timeout = int(evidence.get("timeout_ms", 5000)) / 1000
-            deadline = time.monotonic() + timeout
-            matched = ""
-            while time.monotonic() < deadline:
-                matched = next(
-                    (
-                        title
-                        for title in windows.visible_window_titles()
-                        if expected in title.casefold()
-                    ),
-                    "",
-                )
-                if matched:
-                    break
-                self._wait(0.15)
-            evidence_results.append(
-                {
-                    "kind": "window.title_contains",
-                    "expected": evidence.get("expected"),
-                    "ok": bool(matched),
-                    "observed": matched,
-                }
-            )
-
-        evidence_ok = bool(evidence_results) and all(
-            item["ok"] for item in evidence_results
+        evidence_results = check_all(
+            action.get("success_evidence", []),
+            self.probe,
+            baseline,
+            wait=self._wait,
         )
+        verdict = summarize(evidence_results)
         return {
-            "ok": evidence_ok,
+            "ok": verdict["ok"],
             "mode": "executed",
             "action_id": action_id,
             "step_count": len(all_steps),
@@ -271,6 +252,7 @@ class ReplayEngine:
             "degraded_steps": degraded,
             "locator_results": locator_results,
             "evidence": evidence_results,
+            "evidence_summary": verdict,
             "executed": True,
-            "error": None if evidence_ok else "动作已执行，但成功证据未通过",
+            "error": None if verdict["ok"] else f"动作已执行，但{verdict['reason']}",
         }
