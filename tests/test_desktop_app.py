@@ -100,10 +100,14 @@ class DesktopWorkflowTests(unittest.TestCase):
         )
         action_id = next(iter(profile["actions"]))
         action = profile["actions"][action_id]
-        self.assertEqual(action_id, "wechat.reply_message")
+        # 录制器发实例 ID：效果分类 + 目标指纹。规范 ID 由人在提升时授予。
+        self.assertTrue(action_id.startswith("wechat.reply_message."))
         self.assertEqual(action["risk"], "high")
         self.assertNotIn("effect", action["steps"][0])
         self.assertEqual(action["steps"][-1]["effect"]["confirmation"], "always")
+        self.assertEqual(
+            action["steps"][-1]["effect"]["effect_id"], "wechat.reply_message"
+        )
         self.assertEqual(
             classify_effect("给这条抖音点赞")["action_id"], "douyin.like_video"
         )
@@ -111,6 +115,64 @@ class DesktopWorkflowTests(unittest.TestCase):
             classify_effect("发布一篇公众号文章")["action_id"],
             "wechat_official.publish_article",
         )
+
+    def test_distinct_goals_never_share_an_action_id(self) -> None:
+        """中文目标曾经全部塌陷成 workflow.recorded_task —— ID 撞车即协议失效。"""
+
+        goals = [
+            "在Excel里做月度报表",
+            "在Excel里做年度报表",
+            "给张总回复微信",
+            "回复老板消息",
+            "导出发票PDF",
+        ]
+        ids = [
+            next(iter(build_profile("s", goal, self.events, "").get("actions")))
+            for goal in goals
+        ]
+        self.assertEqual(len(set(ids)), len(goals))
+        self.assertNotIn("recorded_task", " ".join(ids))
+        # 同一个目标必须跨进程稳定，否则档案库按 ID 索引不到自己。
+        self.assertEqual(
+            next(iter(build_profile("s2", goals[0], self.events, "")["actions"])),
+            ids[0],
+        )
+
+    def test_guard_does_not_depend_on_user_wording(self) -> None:
+        """守卫靠证据，不靠用户在目标里说对词。"""
+
+        def ends_in(title: str, class_name: str, process: str) -> list[dict]:
+            window = {
+                "hwnd": 11,
+                "title": title,
+                "class_name": class_name,
+                "process": process,
+                "rect": [0, 0, 800, 600],
+            }
+            return [{"kind": "keyboard.press", "key": "ENTER", "window": window,
+                     "offset_ms": 10}]
+
+        # 目标描述完全没有"发送"的意思，仍然必须守卫。
+        for title, class_name, process in (
+            ("钉钉", "StandardFrame_DingTalk", "dingtalk.exe"),
+            ("飞书", "Chrome_WidgetWin_1", "feishu.exe"),
+            ("企业微信", "WeWorkWindow", "wxwork.exe"),
+            ("收件箱 - Outlook", "rctrl_renwnd32", "outlook.exe"),
+        ):
+            with self.subTest(app=process):
+                profile = build_profile("s", "随便点点", ends_in(title, class_name, process), "")
+                action = next(iter(profile["actions"].values()))
+                self.assertIn("effect", action["steps"][-1], f"{process} 未被守卫")
+
+        # 换成英文、换成"发给"这类同义表达，同样必须守卫。
+        for goal in ("reply to boss on WeChat", "把这条消息发给客户群", "pay the invoice"):
+            with self.subTest(goal=goal):
+                self.assertIsNotNone(classify_effect(goal), f"{goal!r} 未被守卫")
+
+        # 但不能过度守卫：本地计算没有对外效果。
+        calc = build_profile("s", "算一下 7+8",
+                             ends_in("计算器", "ApplicationFrameWindow", "calc.exe"), "")
+        self.assertNotIn("effect", next(iter(calc["actions"].values()))["steps"][-1])
 
     def test_wechat_recording_infers_effect_and_semantic_inputs(self) -> None:
         events = [dict(event) for event in self.events]
@@ -135,7 +197,7 @@ class DesktopWorkflowTests(unittest.TestCase):
             "微信",
         )
         self.assertEqual(validate_profile(profile), [])
-        action = profile["actions"]["wechat.reply_message"]
+        action = next(iter(profile["actions"].values()))
         self.assertEqual(
             set(action["input_schema"]["properties"]),
             {"conversation", "reply_text"},
@@ -219,7 +281,7 @@ class DesktopWorkflowTests(unittest.TestCase):
             merged,
             "微信",
         )
-        action = profile["actions"]["wechat.reply_message"]
+        action = next(iter(profile["actions"].values()))
         self.assertNotIn("effect", action["steps"][-2])
         self.assertEqual(action["steps"][-1]["effect"]["kind"], "send_message")
 
