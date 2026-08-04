@@ -118,6 +118,9 @@ title     （窗口标题，随会话和文件名变）
 - `window.title_contains` 是**最弱**的一种：消息发成功和发失败，窗口标题往往完全一样。
   因此 `validated` 档案**必须**至少有一条其它种类的证据。
 - 每条证据**应当**声明 `timeout_ms`。
+- `browser.address_matches` **必须**按网址逐段比较：主机整段相等（scheme 可省、`www.` 前缀两侧同等对待、
+  userinfo 段不参与比较），期望声明了路径或查询串则必须一致。**不得**用子串比较 ——
+  那会让期望 `example.com` 被 `example.com.attacker.io` 和 `notexample.com` 同时命中。
 - 变化类证据（`file.hash_changed`、`file.modified_since`）**必须**在动作执行**之前**拍基线，
   否则无从判断变化是不是这次动作造成的。没有基线的变化类证据**必须**判为未通过。
 - 实现**不得**把"检查不了"当成"通过"。未实现或未知的证据种类**必须**判为未通过并注明原因 ——

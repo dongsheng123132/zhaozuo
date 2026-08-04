@@ -167,6 +167,52 @@ class EvidenceEngineTests(unittest.TestCase):
             check_one({"kind": "window.title_contains", "expected": "微信"}, probe)["ok"]
         )
 
+    def _address(self, expected: str, observed: str, **extra: object) -> dict:
+        return check_one(
+            {
+                "kind": "browser.address_matches",
+                "expected": expected,
+                "locator": {"automation_id": "omnibox"},
+                **extra,
+            },
+            FakeProbe(values={"omnibox": observed}),
+        )
+
+    def test_browser_address_requires_the_whole_host(self) -> None:
+        """子串比较会让 example.com 命中 example.com.attacker.io。"""
+
+        self.assertFalse(self._address("example.com", "example.com.attacker.io/login")["ok"])
+        self.assertFalse(self._address("example.com", "notexample.com")["ok"])
+        # userinfo 伪装：真正去的是 attacker.io。
+        self.assertFalse(self._address("example.com", "https://example.com@attacker.io")["ok"])
+        self.assertIn("主机不符", self._address("example.com", "attacker.io")["reason"])
+
+    def test_browser_address_tolerates_how_address_bars_render_urls(self) -> None:
+        # 地址栏普遍省略 scheme、隐藏 www.，这些不该被判成失败。
+        self.assertTrue(self._address("https://example.com", "example.com")["ok"])
+        self.assertTrue(self._address("https://www.example.com", "example.com")["ok"])
+        self.assertTrue(self._address("example.com", "https://example.com/docs")["ok"])
+        self.assertTrue(
+            self._address(
+                "https://example.com/", "example.com",
+                normalization="ignore_trailing_slash",
+            )["ok"]
+        )
+
+    def test_browser_address_holds_declared_path_and_query(self) -> None:
+        self.assertTrue(self._address("example.com/docs", "https://example.com/docs")["ok"])
+        self.assertFalse(self._address("example.com/docs", "https://example.com/other")["ok"])
+        self.assertTrue(self._address("example.com/s?q=1", "https://example.com/s?q=1")["ok"])
+        self.assertFalse(self._address("example.com/s?q=1", "https://example.com/s?q=2")["ok"])
+
+    def test_browser_address_fails_closed_on_unreadable_input(self) -> None:
+        self.assertFalse(self._address("example.com", "chrome://settings")["ok"])
+        self.assertFalse(self._address("", "https://example.com")["ok"])
+        missing_locator = check_one(
+            {"kind": "browser.address_matches", "expected": "example.com"}, FakeProbe()
+        )
+        self.assertFalse(missing_locator["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

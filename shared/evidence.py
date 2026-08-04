@@ -21,6 +21,7 @@ import unicodedata
 from hashlib import blake2b
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 
 #: 需要在动作执行前拍基线的证据种类。
@@ -245,6 +246,25 @@ def _check_control_toggle_state(spec, probe, _baseline):
     return _result(spec, ok, state, "" if ok else f"控件状态为 {state}")
 
 
+def _split_url(text: Any) -> tuple[str, str, str] | None:
+    """(host, path, query)。地址栏普遍省略 scheme，所以 scheme 不参与比较。"""
+
+    raw = str(text if text is not None else "").strip()
+    if not raw:
+        return None
+    if "://" not in raw:
+        raw = "//" + raw.lstrip("/")
+    parsed = urlsplit(raw)
+    host = parsed.netloc.casefold()
+    if "@" in host:
+        # userinfo 是经典的伪装位：evil.com@real.com 真正去的是 real.com。
+        host = host.split("@", 1)[1]
+    host = host.removeprefix("www.")
+    if not host:
+        return None
+    return host, parsed.path, parsed.query
+
+
 def _check_browser_address_matches(spec, probe, _baseline):
     locator = spec.get("locator") or {}
     if not locator:
@@ -255,11 +275,28 @@ def _check_browser_address_matches(spec, probe, _baseline):
     value = probe.uia_value(locator)
     if value is None:
         return _result(spec, False, None, "读不到地址栏内容")
-    expected, observed = _normalize(spec.get("expected")), _normalize(value)
+
+    want = _split_url(spec.get("expected"))
+    if want is None:
+        return _result(spec, False, value, "browser.address_matches 缺少可解析的 expected")
+    got = _split_url(value)
+    if got is None:
+        return _result(spec, False, value, "地址栏内容不是可解析的网址")
+
+    if want[0] != got[0]:
+        # 过去这里是子串比较，于是期望 example.com 会被
+        # example.com.attacker.io 命中 —— 主机必须整段相等。
+        return _result(spec, False, value, f"主机不符：期望 {want[0]}，实际 {got[0]}")
+
+    want_path, got_path = want[1], got[1]
     if str(spec.get("normalization") or "") == "ignore_trailing_slash":
-        expected, observed = expected.rstrip("/"), observed.rstrip("/")
-    ok = expected == observed or expected in observed
-    return _result(spec, ok, value, "" if ok else "地址与期望不符")
+        want_path, got_path = want_path.rstrip("/"), got_path.rstrip("/")
+    # 期望没写路径 = 只要求落在这个站点上；写了就必须一致。
+    if want_path not in ("", "/") and want_path != got_path:
+        return _result(spec, False, value, f"路径不符：期望 {want_path}，实际 {got_path}")
+    if want[2] and want[2] != got[2]:
+        return _result(spec, False, value, "查询串与期望不符")
+    return _result(spec, True, value, "")
 
 
 CHECKERS = {
