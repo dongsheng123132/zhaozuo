@@ -78,7 +78,11 @@ class ReplayEngine:
             return f"目标窗口不唯一，有 {match.get('candidates')} 个同分候选"
         if match.get("confidence") not in cls.TRUSTED_TARGET_CONFIDENCE:
             return f"窗口身份证据不足（{match.get('confidence')}），无法确定是同一个目标"
-        if confirmed_target and windows.target_fingerprint(match.get("context")) != confirmed_target:
+        if not confirmed_target:
+            # 没有指纹就无从比对，而"比不了"不等于"没变"。调用方漏传就必须失败，
+            # 否则这道复核对每一个忘记传指纹的调用方都自动让路。
+            return "缺少确认时的目标指纹，无法证明现在这个窗口就是人确认过的那个"
+        if windows.target_fingerprint(match.get("context")) != confirmed_target:
             # 人确认的是 A 窗口，真要动手时前台变成了 B —— 这一步必须失败，不能顺手发出去。
             return "确认之后目标窗口已经变了"
         return None

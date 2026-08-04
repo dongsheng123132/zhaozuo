@@ -382,6 +382,17 @@ class DesktopWorkflowTests(unittest.TestCase):
         self.assertIn("目标窗口已经变了", report["error"])
         click.assert_not_called()
 
+        # 调用方压根没传指纹：比不了 ≠ 没变，必须拒绝，不能对每个漏传的调用方让路。
+        engine = ReplayEngine(probe=FakeProbe(windows=1, everything_exists=True, titles=["计算器"]))
+        with self._replay_harness(engine, self._match()) as click:
+            report = engine.run(
+                profile, {}, execute=True,
+                confirmed_effect_step_id=step_id, start_step_id=step_id,
+            )
+        self.assertEqual(report["mode"], "target_unverified")
+        self.assertIn("缺少确认时的目标指纹", report["error"])
+        click.assert_not_called()
+
     def test_window_scoring_rejects_same_named_window_of_another_app(self) -> None:
         recorded = {"title": "微信", "class_name": "WeChatMainWndForPC", "process": "wechat.exe"}
 
