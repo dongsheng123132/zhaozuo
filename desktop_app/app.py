@@ -769,6 +769,21 @@ class ZhaozuoApp:
                     self.show_dashboard()
                     self._refresh_pill()
                     continue
+                if report.get("mode") == "readiness_timeout":
+                    self.status_var.set("前置条件未满足，已停止")
+                    self.report_var.set(
+                        f"{report.get('error', '前置条件未满足')}\n"
+                        f"已执行 {report.get('executed_step_count', 0)} 步后停下，"
+                        f"没有继续往下点。"
+                    )
+                    self.execute_button.configure(text="真实执行")
+                    self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
+                    self.pending_effect_step_id = None
+                    self.pending_effect_label = ""
+                    self.pending_target_fingerprint = ""
+                    self.show_dashboard()
+                    self._refresh_pill()
+                    continue
                 if report.get("mode") == "target_unverified":
                     # 拒绝执行不是失败，是守卫生效。文案必须让人看懂为什么被拦。
                     target = report.get("target") or {}
@@ -795,10 +810,15 @@ class ZhaozuoApp:
                 degraded = report.get("degraded_steps") or []
                 locator_results = report.get("locator_results") or []
                 uia_count = sum(1 for item in locator_results if item.get("used") == "uia")
+                timed = report.get("timed_steps") or []
+                unready = report.get("unready_steps") or []
                 self.report_var.set(
                     f"执行 {'成功' if report.get('ok') else '未验证成功'} · "
                     f"{report.get('step_count')} 步 · {report.get('duration_ms')}ms · "
-                    f"UIA 命中 {uia_count} 步 · 坐标兜底 {len(degraded)} 步"
+                    f"UIA 命中 {uia_count} 步 · 坐标兜底 {len(degraded)} 步\n"
+                    # 照秒表的步骤越多，这份档案在别的机器上越不可靠。
+                    f"等到状态 {len(report.get('readiness_results') or []) - len(timed)} 步 · "
+                    f"照秒表 {len(timed)} 步 · 等超时 {len(unready)} 步"
                 )
                 self.show_dashboard()
                 self._refresh_pill()

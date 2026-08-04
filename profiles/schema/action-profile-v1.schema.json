@@ -270,7 +270,16 @@
         },
         "description": { "type": "string" },
         "captured_offset_ms": { "type": "integer", "minimum": 0 },
-        "timeout_ms": { "type": "integer", "minimum": 1 },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "本步等待前置条件就绪的预算。未声明时由执行器按录制间隔推导。"
+        },
+        "wait_for": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/successEvidence" },
+          "description": "本步执行前必须可观察为真的前置条件。声明了就必须满足，超时即中止 —— 未声明时执行器按定位器派生启发式条件。"
+        },
         "args": { "type": "object" },
         "locator": {
           "type": "object",

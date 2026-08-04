@@ -88,6 +88,91 @@ class ReplayEngine:
             cls.MAX_INTER_STEP_WAIT_SECONDS,
         )
 
+    #: 等待就绪的轮询间隔与预算上下限。
+    READINESS_POLL_SECONDS = 0.05
+    MIN_READINESS_BUDGET_SECONDS = 1.5
+    MAX_READINESS_BUDGET_SECONDS = 30.0
+
+    @staticmethod
+    def readiness_conditions(step: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+        """What must be observably true before this step may run.
+
+        录制时人等了多久，只说明当时那台机器有多快 —— 换台机器、网络慢一点，
+        同一个 800ms 就不够了。能观察的锚点（窗口在不在、控件出来没有）才是
+        真正的前置条件；照秒表睡是没有锚点时的兜底，而且必须被记为降级。
+        """
+
+        declared = step.get("wait_for")
+        if step.get("kind") == "wait.for_evidence":
+            declared = declared or (step.get("args") or {}).get("evidence")
+        if isinstance(declared, dict):
+            declared = [declared]
+        if isinstance(declared, list) and declared:
+            return [item for item in declared if isinstance(item, dict)], "declared"
+
+        locator = step.get("locator") or {}
+        window = locator.get("window") or {}
+        uia = locator.get("uia")
+        conditions: list[dict[str, Any]] = []
+        if window:
+            conditions.append({"kind": "window.exists", "window": window})
+        if isinstance(uia, dict) and uia:
+            conditions.append(
+                {"kind": "uia.element_exists", "locator": {**uia, "window": window}}
+            )
+            return conditions, "anchored"
+        return conditions, "unanchored"
+
+    @classmethod
+    def readiness_budget(cls, step: dict[str, Any], recorded_delay: float) -> float:
+        """How long to keep waiting. 录制间隔只当提示，不当机制。"""
+
+        declared = step.get("timeout_ms")
+        if declared:
+            return max(float(declared) / 1000, 0.0)
+        return min(
+            max(recorded_delay * 2, cls.MIN_READINESS_BUDGET_SECONDS),
+            cls.MAX_READINESS_BUDGET_SECONDS,
+        )
+
+    def _await_readiness(
+        self, step: dict[str, Any], recorded_delay: float, is_first: bool
+    ) -> dict[str, Any]:
+        conditions, source = self.readiness_conditions(step)
+        started = time.monotonic()
+
+        if source == "unanchored" or not conditions:
+            # 没有可观察的锚点，只能回落到录制间隔。这是降级，必须能被数出来。
+            if not is_first:
+                self._wait(recorded_delay)
+            return {
+                "step_id": step["id"],
+                "mode": "timed",
+                "source": source,
+                "waited_ms": round((time.monotonic() - started) * 1000),
+            }
+
+        budget = self.readiness_budget(step, recorded_delay)
+        deadline = started + budget
+        results = check_all(conditions, self.probe)
+        while not all(item["ok"] for item in results) and time.monotonic() < deadline:
+            self._wait(self.READINESS_POLL_SECONDS)
+            results = check_all(conditions, self.probe)
+
+        ready = all(item["ok"] for item in results)
+        return {
+            "step_id": step["id"],
+            "mode": "observed" if ready else "timeout",
+            "source": source,
+            "waited_ms": round((time.monotonic() - started) * 1000),
+            "budget_ms": round(budget * 1000),
+            "unmet": [
+                {"kind": item.get("kind"), "reason": item.get("reason")}
+                for item in results
+                if not item["ok"]
+            ],
+        }
+
     def run(
         self,
         profile: dict[str, Any],
@@ -133,17 +218,44 @@ class ReplayEngine:
         baseline = capture_baseline(action.get("success_evidence", []))
         degraded: list[str] = []
         locator_results: list[dict[str, str]] = []
+        readiness_results: list[dict[str, Any]] = []
+        timed_steps: list[str] = []
+        unready_steps: list[str] = []
         executed_step_count = 0
         previous_offset = 0
         for index, step in enumerate(steps, 1):
             if self.cancelled.is_set():
                 raise InterruptedError("执行已停止")
             offset = int(step.get("captured_offset_ms", previous_offset))
-            if index > 1:
-                self._wait(self.replay_delay(previous_offset, offset))
-            previous_offset = offset
             if progress:
                 progress(f"{index}/{len(steps)}  {step.get('description', step['kind'])}")
+
+            readiness = self._await_readiness(
+                step, self.replay_delay(previous_offset, offset), is_first=index == 1
+            )
+            previous_offset = offset
+            readiness_results.append(readiness)
+            if readiness["mode"] == "timed":
+                timed_steps.append(step["id"])
+            elif readiness["mode"] == "timeout":
+                unready_steps.append(step["id"])
+                if readiness["source"] == "declared":
+                    # 档案作者明确声明的前置条件没满足 —— 继续往下点就是往空处点。
+                    return {
+                        "ok": False,
+                        "mode": "readiness_timeout",
+                        "action_id": action_id,
+                        "step_count": len(all_steps),
+                        "executed_step_count": executed_step_count,
+                        "executed": bool(executed_step_count),
+                        "readiness_results": readiness_results,
+                        "degraded_steps": degraded,
+                        "locator_results": locator_results,
+                        "error": (
+                            f"步骤 {step['id']} 声明的前置条件在 "
+                            f"{readiness['budget_ms']}ms 内没有满足，已停止"
+                        ),
+                    }
 
             locator = step.get("locator", {})
             window_locator = locator.get("window", {})
@@ -157,6 +269,7 @@ class ReplayEngine:
                     return {
                         "ok": False,
                         "mode": "awaiting_confirmation",
+                        "readiness_results": readiness_results,
                         "action_id": action_id,
                         "step_count": len(all_steps),
                         "executed_step_count": executed_step_count,
@@ -172,6 +285,7 @@ class ReplayEngine:
                     return {
                         "ok": False,
                         "mode": "target_unverified",
+                        "readiness_results": readiness_results,
                         "action_id": action_id,
                         "step_count": len(all_steps),
                         "executed_step_count": executed_step_count,
@@ -231,6 +345,9 @@ class ReplayEngine:
                 locator_results.append(
                     {"step_id": step["id"], "used": "uia_focus" if focused else "focused_window"}
                 )
+            elif kind == "wait.for_evidence":
+                # 等待本身就是这一步的全部内容，readiness 已经完成，不碰键鼠。
+                locator_results.append({"step_id": step["id"], "used": "evidence"})
             else:
                 raise ProfileError(f"尚不支持真实回放步骤: {kind}")
             executed_step_count += 1
@@ -250,6 +367,9 @@ class ReplayEngine:
             "executed_step_count": executed_step_count,
             "duration_ms": round((time.monotonic() - started) * 1000),
             "degraded_steps": degraded,
+            "timed_steps": timed_steps,
+            "unready_steps": unready_steps,
+            "readiness_results": readiness_results,
             "locator_results": locator_results,
             "evidence": evidence_results,
             "evidence_summary": verdict,

@@ -23,6 +23,7 @@ class FakeProbe:
         self.clipboard: str = str(state.get("clipboard", ""))
         self.values: dict[str, str] = dict(state.get("values", {}))  # type: ignore[arg-type]
         self.toggles: dict[str, str] = dict(state.get("toggles", {}))  # type: ignore[arg-type]
+        self.everything_exists: bool = bool(state.get("everything_exists", False))
 
     @staticmethod
     def _key(locator: dict) -> str:
@@ -41,6 +42,8 @@ class FakeProbe:
         return self.clipboard
 
     def uia_exists(self, locator: dict) -> bool:
+        if self.everything_exists:
+            return True
         return self._key(locator) in self.values or self._key(locator) in self.toggles
 
     def uia_value(self, locator: dict) -> str | None:

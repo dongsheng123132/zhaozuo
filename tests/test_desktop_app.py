@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import json
 import tempfile
@@ -17,6 +18,7 @@ from desktop_app.workflow import (
     save_recording,
 )
 from shared.profile import resolve_action, validate_profile
+from tests.test_evidence import FakeProbe
 
 
 class DesktopWorkflowTests(unittest.TestCase):
@@ -84,7 +86,7 @@ class DesktopWorkflowTests(unittest.TestCase):
         profile = build_profile(
             "session-1", "搜索客户", self.events, "搜索结果"
         )
-        report = ReplayEngine().run(
+        report = ReplayEngine(probe=FakeProbe()).run(
             profile, {"text_1": "新客户"}, execute=False
         )
         self.assertTrue(report["ok"])
@@ -301,17 +303,20 @@ class DesktopWorkflowTests(unittest.TestCase):
             },
         }
 
+    @contextlib.contextmanager
     def _replay_harness(self, engine: ReplayEngine, match: dict):
-        return (
-            patch("desktop_app.replay.windows.resolve_window", return_value=match),
-            patch("desktop_app.replay.windows.activate_window", return_value=True),
-            patch("desktop_app.replay.windows.window_context",
-                  return_value={"rect": [0, 0, 800, 600]}),
-            patch("desktop_app.replay.uia.find_bounds", return_value=[10, 10, 30, 30]),
-            patch.object(engine, "_wait", return_value=None),
-            patch("desktop_app.replay.windows.visible_window_titles",
-                  return_value=["计算器"]),
-        )
+        """Everything the replay touches, stubbed. 就绪判定走注入的假 probe，不打真机。"""
+
+        with contextlib.ExitStack() as stack:
+            for target, value in (
+                ("desktop_app.replay.windows.resolve_window", match),
+                ("desktop_app.replay.windows.activate_window", True),
+                ("desktop_app.replay.windows.window_context", {"rect": [0, 0, 800, 600]}),
+                ("desktop_app.replay.uia.find_bounds", [10, 10, 30, 30]),
+            ):
+                stack.enter_context(patch(target, return_value=value))
+            stack.enter_context(patch.object(engine, "_wait", return_value=None))
+            yield stack.enter_context(patch("desktop_app.replay.windows.click"))
 
     def test_replay_stops_before_final_effect_then_resumes_only_that_step(self) -> None:
         profile = build_profile(
@@ -320,11 +325,8 @@ class DesktopWorkflowTests(unittest.TestCase):
             [self.events[0]],
             "计算器",
         )
-        engine = ReplayEngine()
-        patches = self._replay_harness(engine, self._match())
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patch(
-            "desktop_app.replay.windows.click"
-        ) as click:
+        engine = ReplayEngine(probe=FakeProbe(windows=1, everything_exists=True, titles=["计算器"]))
+        with self._replay_harness(engine, self._match()) as click:
             pending = engine.run(profile, {}, execute=True)
             self.assertEqual(pending["mode"], "awaiting_confirmation")
             click.assert_not_called()
@@ -358,11 +360,8 @@ class DesktopWorkflowTests(unittest.TestCase):
         }
         for name, match in cases.items():
             with self.subTest(case=name):
-                engine = ReplayEngine()
-                patches = self._replay_harness(engine, match)
-                with patches[0], patches[1], patches[2], patches[3], patches[4], patches[
-                    5
-                ], patch("desktop_app.replay.windows.click") as click:
+                engine = ReplayEngine(probe=FakeProbe(windows=1, everything_exists=True, titles=["计算器"]))
+                with self._replay_harness(engine, match) as click:
                     report = engine.run(
                         profile, {}, execute=True,
                         confirmed_effect_step_id=step_id, start_step_id=step_id,
@@ -372,11 +371,8 @@ class DesktopWorkflowTests(unittest.TestCase):
                 click.assert_not_called()
 
         # 人确认的是 A 窗口，动手时前台已经变成 B —— 必须拒绝，不能顺手发出去。
-        engine = ReplayEngine()
-        patches = self._replay_harness(engine, self._match(title="另一个会话"))
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patch(
-            "desktop_app.replay.windows.click"
-        ) as click:
+        engine = ReplayEngine(probe=FakeProbe(windows=1, everything_exists=True, titles=["计算器"]))
+        with self._replay_harness(engine, self._match(title="另一个会话")) as click:
             report = engine.run(
                 profile, {}, execute=True,
                 confirmed_effect_step_id=step_id, start_step_id=step_id,
