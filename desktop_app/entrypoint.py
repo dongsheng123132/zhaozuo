@@ -105,3 +105,9 @@ def main() -> int:
     from desktop_app.app import main as run_app
 
     return run_app()
+
+
+if __name__ == "__main__":
+    # 没有这个守卫时，`python -m desktop_app.entrypoint --self-test` 会把模块体跑一遍
+    # 就退出——退出码 0、零输出、什么都没检查。对调用方来说那读作"自检通过"。
+    raise SystemExit(main())
