@@ -170,6 +170,10 @@ def build_profile(
         }
         if window.get("process"):
             window_locator["process"] = window["process"]
+        if window.get("dpi"):
+            # 记下录制时的缩放。定位不靠它，但换台机器缩放不同时，
+            # 这是唯一能解释"坐标为什么对不上"的线索。
+            window_locator["dpi"] = int(window["dpi"])
         base: dict[str, Any] = {
             "id": f"step_{index:03d}",
             "description": event_summary(event),

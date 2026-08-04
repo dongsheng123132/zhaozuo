@@ -5,6 +5,8 @@ import time
 from ctypes import wintypes
 from typing import Any
 
+from desktop_app import dpi as _dpi
+
 
 if not hasattr(ctypes, "windll"):
     raise RuntimeError("照做桌面演示器目前只支持 Windows")
@@ -216,7 +218,8 @@ def process_name(hwnd: int) -> str:
 def window_context(hwnd: int | None = None) -> dict[str, Any]:
     handle = int(hwnd or user32.GetForegroundWindow())
     if not handle:
-        return {"hwnd": 0, "title": "", "class_name": "", "process": "", "rect": None}
+        return {"hwnd": 0, "title": "", "class_name": "", "process": "",
+                "dpi": _dpi.system_dpi(), "rect": None}
 
     length = user32.GetWindowTextLengthW(handle)
     title_buffer = ctypes.create_unicode_buffer(length + 1)
@@ -230,6 +233,7 @@ def window_context(hwnd: int | None = None) -> dict[str, Any]:
         "title": title_buffer.value,
         "class_name": class_buffer.value,
         "process": process_name(handle),
+        "dpi": _dpi.window_dpi(handle),
         "rect": [rect.left, rect.top, rect.right, rect.bottom] if has_rect else None,
     }
 

@@ -83,6 +83,27 @@ class ReplayEngine:
             return "确认之后目标窗口已经变了"
         return None
 
+    @staticmethod
+    def _dpi_mismatch(
+        window_locator: dict[str, Any], match: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Recorded vs live scaling. 不阻断执行，但必须留下线索。
+
+        坐标对不上的时候，"这台机器缩放和录制时不一样"往往是唯一的解释，
+        而它过去完全不可见 —— 只表现为点偏了。
+        """
+
+        recorded = window_locator.get("dpi")
+        live = (match.get("context") or {}).get("dpi")
+        if not recorded or not live or int(recorded) == int(live):
+            return None
+        return {
+            "recorded_dpi": int(recorded),
+            "observed_dpi": int(live),
+            "recorded_scale": round(int(recorded) / 96, 3),
+            "observed_scale": round(int(live) / 96, 3),
+        }
+
     @classmethod
     def replay_delay(cls, previous_offset_ms: int, offset_ms: int) -> float:
         """Preserve UI settle time while bounding accidental long pauses."""
@@ -224,6 +245,7 @@ class ReplayEngine:
         degraded: list[str] = []
         locator_results: list[dict[str, str]] = []
         readiness_results: list[dict[str, Any]] = []
+        dpi_mismatches: list[dict[str, Any]] = []
         timed_steps: list[str] = []
         unready_steps: list[str] = []
         executed_step_count = 0
@@ -266,6 +288,9 @@ class ReplayEngine:
             window_locator = locator.get("window", {})
             match = windows.resolve_window(window_locator)
             hwnd = match["hwnd"]
+            mismatch = self._dpi_mismatch(window_locator, match)
+            if mismatch:
+                dpi_mismatches.append({"step_id": step["id"], **mismatch})
 
             effect = step.get("effect")
             if isinstance(effect, dict):
@@ -388,6 +413,7 @@ class ReplayEngine:
             "executed_step_count": executed_step_count,
             "duration_ms": round((time.monotonic() - started) * 1000),
             "degraded_steps": degraded,
+            "dpi_mismatches": dpi_mismatches,
             "timed_steps": timed_steps,
             "unready_steps": unready_steps,
             "readiness_results": readiness_results,

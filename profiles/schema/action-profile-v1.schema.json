@@ -115,7 +115,11 @@
         "class_name": { "type": "string" },
         "title": { "type": "string" },
         "title_regex": { "type": "string" },
-        "control_type": { "type": "string" }
+        "control_type": { "type": "string" },
+        "dpi": {
+          "type": "integer",
+          "description": "录制时该窗口的有效 DPI（96 = 100%）。不用于定位，用于解释坐标为何对不上。"
+        }
       },
       "additionalProperties": true
     },

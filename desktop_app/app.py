@@ -10,6 +10,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
+from desktop_app import dpi as dpi_module
 from desktop_app.capture import EventRecorder, ImageGrab
 from desktop_app.replay import ReplayEngine
 from desktop_app.workflow import (
@@ -39,6 +40,12 @@ FONT = "Microsoft YaHei UI"
 class ZhaozuoApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
+        # 进程声明了 per-monitor 感知，窗口尺寸从此是物理像素 —— 界面必须自己按
+        # 缩放放大，否则在 125%/150% 的机器上会比以前小一圈。
+        self.scale = dpi_module.scale_for(
+            dpi_module.window_dpi(self.root.winfo_id()) or dpi_module.system_dpi()
+        )
+        self.root.tk.call("tk", "scaling", self.scale * 96 / 72)
         self.root.title("照做")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -68,8 +75,13 @@ class ZhaozuoApp:
         self._refresh_pill()
         self.root.after(250, self._tick)
 
+    def _px(self, value: float) -> int:
+        """Logical pixels → physical pixels for this display."""
+
+        return round(value * self.scale)
+
     def _default_pill_geometry(self) -> str:
-        width, height = 184, 56
+        width, height = self._px(184), self._px(56)
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         return f"{width}x{height}+{screen_w - width - 24}+{screen_h // 2 - 28}"
@@ -77,8 +89,8 @@ class ZhaozuoApp:
     def _build_pill(self) -> None:
         self.pill = tk.Canvas(
             self.root,
-            width=184,
-            height=56,
+            width=self._px(184),
+            height=self._px(56),
             bg=BG,
             highlightthickness=0,
             cursor="hand2",
@@ -130,8 +142,10 @@ class ZhaozuoApp:
         color = RED if self.state == "recording" else GREEN
         if self.state == "executing":
             color = AMBER
-        self._rounded_rect(2, 2, 182, 54, 18, fill=CARD, outline="#303b58", width=1)
-        self.pill.create_oval(14, 16, 38, 40, fill=color, outline="")
+        px = self._px
+        self._rounded_rect(px(2), px(2), px(182), px(54), px(18),
+                           fill=CARD, outline="#303b58", width=1)
+        self.pill.create_oval(px(14), px(16), px(38), px(40), fill=color, outline="")
         if self.state == "recording":
             elapsed = int(time.monotonic() - self.started_at)
             label = f"停止 · {elapsed // 60:02d}:{elapsed % 60:02d}"
@@ -143,22 +157,22 @@ class ZhaozuoApp:
             label = "开始演示"
             sub = "你做一遍，它照做"
         self.pill.create_text(
-            50,
-            22,
+            px(50),
+            px(22),
             text=label,
             anchor="w",
             fill=TEXT,
             font=(FONT, 11, "bold"),
         )
         self.pill.create_text(
-            50,
-            39,
+            px(50),
+            px(39),
             text=sub,
             anchor="w",
             fill=MUTED,
             font=(FONT, 8),
         )
-        self.pill.create_text(168, 28, text="⋮", fill=MUTED, font=(FONT, 16))
+        self.pill.create_text(px(168), px(28), text="⋮", fill=MUTED, font=(FONT, 16))
 
     def _pill_press(self, event: tk.Event) -> None:
         self._drag_origin = (
@@ -191,8 +205,8 @@ class ZhaozuoApp:
     def _build_dashboard(self) -> None:
         self.dashboard = tk.Toplevel(self.root)
         self.dashboard.title("照做 · 任务工作台")
-        self.dashboard.geometry("640x760")
-        self.dashboard.minsize(580, 660)
+        self.dashboard.geometry(f"{self._px(640)}x{self._px(760)}")
+        self.dashboard.minsize(self._px(580), self._px(660))
         self.dashboard.configure(bg=BG)
         self.dashboard.protocol("WM_DELETE_WINDOW", self.dashboard.withdraw)
 
