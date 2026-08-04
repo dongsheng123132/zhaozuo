@@ -325,6 +325,7 @@ def save_recording(
     goal: str,
     events: list[dict[str, Any]],
     profile: dict[str, Any],
+    dropped_records: int = 0,
 ) -> dict[str, Path]:
     session_dir.mkdir(parents=True, exist_ok=True)
     events_path = session_dir / "events.jsonl"
@@ -349,6 +350,9 @@ def save_recording(
                     (int(event.get("segment_index") or 1) for event in events),
                     default=0,
                 ),
+                # >0 表示这次录制不完整：档案里少的那几步不会有任何其它痕迹。
+                "dropped_records": int(dropped_records),
+                "complete": int(dropped_records) == 0,
                 "typed_text_policy": "redacted",
                 "profile": profile_path.name,
             },

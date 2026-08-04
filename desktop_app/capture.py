@@ -65,7 +65,6 @@ class EventRecorder:
         self.screenshot_dir = screenshot_dir
         self.capture_screenshots = capture_screenshots and ImageGrab is not None
         self.events: list[dict[str, Any]] = []
-        self.dropped_records = 0
 
         self._raw: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=RAW_QUEUE_LIMIT)
         self._hook = hooks.InputHookListener(self._raw)
@@ -86,6 +85,16 @@ class EventRecorder:
         with self._lock:
             return len(self.events)
 
+    @property
+    def dropped_records(self) -> int:
+        """队列满时被钩子丢掉的原始输入条数。
+
+        丢一条就等于档案里少一步，而少一步的录制看上去和完整录制一模一样。
+        所以这个数必须一路走到会话摘要和界面上，不能只留在钩子里。
+        """
+
+        return self._hook.dropped
+
     def start(self) -> None:
         if self.running:
             return
@@ -102,7 +111,6 @@ class EventRecorder:
             self._worker.join(timeout=3)
         self._drain_pending()
         self._record_gestures(self._assembler.flush())
-        self.dropped_records = self._hook.dropped
         with self._lock:
             return list(self.events)
 

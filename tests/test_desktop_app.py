@@ -419,6 +419,31 @@ class DesktopWorkflowTests(unittest.TestCase):
             self.assertEqual(paths["profile"].name, "draft.action-profile.json")
             summary = json.loads(paths["summary"].read_text(encoding="utf-8"))
             self.assertEqual(summary["segment_count"], 1)
+            self.assertEqual(summary["dropped_records"], 0)
+            self.assertTrue(summary["complete"])
+
+    def test_dropped_input_marks_the_session_incomplete(self) -> None:
+        """丢了输入的录制必须自己说出来 —— 缺步的档案否则和完整档案长得一样。"""
+
+        profile = build_profile("session-1", "搜索客户", self.events, "")
+        with tempfile.TemporaryDirectory() as directory:
+            paths = save_recording(
+                Path(directory),
+                "session-1",
+                "搜索客户",
+                self.events,
+                profile,
+                dropped_records=3,
+            )
+            summary = json.loads(paths["summary"].read_text(encoding="utf-8"))
+            self.assertEqual(summary["dropped_records"], 3)
+            self.assertFalse(summary["complete"])
+
+    def test_recorder_reports_the_hook_drop_count(self) -> None:
+        recorder = EventRecorder("session-1", Path("nonexistent"))
+        self.assertEqual(recorder.dropped_records, 0)
+        recorder._hook.dropped = 2
+        self.assertEqual(recorder.dropped_records, 2)
 
 
 if __name__ == "__main__":

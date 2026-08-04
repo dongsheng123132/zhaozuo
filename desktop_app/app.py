@@ -58,6 +58,7 @@ class ZhaozuoApp:
         self.session_dir: Path | None = None
         self.recorder: EventRecorder | None = None
         self.recorded_events: list[dict] = []
+        self.recorded_dropped = 0
         self.recording_mode = "new"
         self.current_segment_index = 0
         self.profile: dict | None = None
@@ -463,6 +464,7 @@ class ZhaozuoApp:
             self.session_id = str(summary.get("session_id", session_dir.name))
             self.session_dir = session_dir
             self.recorded_events = merge_recording_segments([], events)
+            self.recorded_dropped = int(summary.get("dropped_records") or 0)
             self.current_segment_index = max(
                 (
                     int(event.get("segment_index") or 1)
@@ -502,7 +504,10 @@ class ZhaozuoApp:
         if placeholders:
             self.inputs_text.insert("1.0", "\n".join(f"{name}=" for name in placeholders))
         self.status_var.set(f"已恢复最近动作 · {len(action['steps'])} 步")
-        self.report_var.set(f"已恢复会话 {self.session_id}；请重新填写回放输入。")
+        restored = f"已恢复会话 {self.session_id}；请重新填写回放输入。"
+        if self.recorded_dropped:
+            restored += f"\n⚠ 这次录制丢失过 {self.recorded_dropped} 条输入，档案可能缺步。"
+        self.report_var.set(restored)
         self.append_button.configure(state="normal")
 
     def show_dashboard(self) -> None:
@@ -563,6 +568,7 @@ class ZhaozuoApp:
             )
             self.session_dir = RECORDINGS / self.session_id
             self.recorded_events = []
+            self.recorded_dropped = 0
             self.current_segment_index = 0
         elif not self.session_dir:
             self.report_var.set("找不到当前动作的录制目录，请重新演示。")
@@ -593,6 +599,10 @@ class ZhaozuoApp:
             self.recorded_events if self.recording_mode == "append" else [],
             captured_events,
         )
+        # 补录时旧片段丢的那几条同样缺在最终档案里，所以按会话累计而不是按片段覆盖。
+        self.recorded_dropped = (
+            self.recorded_dropped if self.recording_mode == "append" else 0
+        ) + self.recorder.dropped_records
         events = self.recorded_events
         self.state = "idle"
         self.record_button.configure(text="重新演示", bg=GREEN, fg="#08251d")
@@ -618,6 +628,7 @@ class ZhaozuoApp:
             self.goal_var.get(),
             events,
             self.profile,
+            dropped_records=self.recorded_dropped,
         )
         action = next(iter(self.profile["actions"].values()))
         detected_effect = any(isinstance(step.get("effect"), dict) for step in action["steps"])
@@ -647,9 +658,13 @@ class ZhaozuoApp:
             if self.recording_mode == "append"
             else f"已生成草案 · {len(action['steps'])} 步"
         )
-        self.report_var.set(
-            f"已保存动作草案 · 会话 {self.session_id} · {segment_count} 个片段"
-        )
+        report = f"已保存动作草案 · 会话 {self.session_id} · {segment_count} 个片段"
+        if self.recorded_dropped:
+            report += (
+                f"\n⚠ 录制期间丢失 {self.recorded_dropped} 条输入，档案可能缺步。"
+                "请重新演示后再往下走。"
+            )
+        self.report_var.set(report)
         self.confirm_var.set(False)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
