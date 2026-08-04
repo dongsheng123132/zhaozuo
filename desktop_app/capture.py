@@ -1,12 +1,30 @@
+"""Privacy-first Windows input recording.
+
+三层，各司其职：
+
+    低级钩子（hooks.py）   逐事件送达，回调只入队，绝不做慢事
+        ↓ 队列
+    富化工作线程（本文件） 窗口身份 + UIA 控件，**跑在钩子之外**
+        ↓
+    手势装配（gestures.py）点击/双击/拖拽/滚轮/按键/文本段，纯逻辑
+
+旧实现把这三件事挤在一个 20ms 轮询循环里，于是 UIA 一慢（跨进程 COM，
+常见 50-500ms）采样就整体停摆 —— 软件越复杂丢得越多。现在钩子那一层
+永远不等 UIA。
+
+隐私不变：可打印文字永不落盘，只留占位符与键数。
+"""
+
 from __future__ import annotations
 
+import queue
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
-from desktop_app import uia, windows
+from desktop_app import hooks, uia, windows
+from shared.gestures import GestureAssembler
 
 
 try:
@@ -15,34 +33,27 @@ except ImportError:  # pragma: no cover - depends on local optional package
     ImageGrab = None
 
 
-PRINTABLE_VKS = list(range(0x30, 0x5B)) + list(range(0xBA, 0xDF))
-SPECIAL_VKS = [
-    0x08,
-    0x09,
-    0x0D,
-    0x1B,
-    0x20,
-    0x21,
-    0x22,
-    0x23,
-    0x24,
-    0x25,
-    0x26,
-    0x27,
-    0x28,
-    0x2D,
-    0x2E,
-] + list(range(0x70, 0x7C))
-MODIFIER_VKS = {0x10: "SHIFT", 0x11: "CTRL", 0x12: "ALT", 0x5B: "WIN"}
-WATCHED_VKS = sorted(set(PRINTABLE_VKS + SPECIAL_VKS + list(MODIFIER_VKS)))
+#: 队列上限。钩子回调宁可丢一条并记数，也不能阻塞 —— 那会卡住整机输入。
+RAW_QUEUE_LIMIT = 8192
+
+#: 焦点控件在连续输入期间基本不变，缓存一小段时间，别为每个键都跑一次 UIA。
+FOCUS_CACHE_MS = 500
+
+IGNORED_WINDOW_CLASSES = {
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "Progman",
+    "WorkerW",
+}
+
+#: 只有可能**开启**一个手势的记录才值得富化；抬起只负责收尾。
+_ENRICHED_KINDS = {"mouse.down", "mouse.wheel", "key.down"}
+
+_POINTER_KINDS = {"pointer.click", "pointer.double_click", "pointer.drag", "pointer.wheel"}
 
 
 class EventRecorder:
-    """Privacy-first Windows input sampler.
-
-    Printable keys are never stored. A contiguous typing segment becomes a
-    `${text_N}` placeholder with only its key count retained.
-    """
+    """Records semantically meaningful gestures, never raw text."""
 
     def __init__(
         self,
@@ -54,192 +65,159 @@ class EventRecorder:
         self.screenshot_dir = screenshot_dir
         self.capture_screenshots = capture_screenshots and ImageGrab is not None
         self.events: list[dict[str, Any]] = []
-        self._started = 0.0
+        self.dropped_records = 0
+
+        self._raw: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=RAW_QUEUE_LIMIT)
+        self._hook = hooks.InputHookListener(self._raw)
+        self._assembler = GestureAssembler()
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._key_states = {vk: False for vk in WATCHED_VKS}
-        self._mouse_states = {0x01: False, 0x02: False}
-        self._text_segment: dict[str, Any] | None = None
-        self._text_counter = 0
+        self._focus_cache: tuple[int, float, Any] | None = None
+
+    # ------------------------------------------------------------- lifecycle
 
     @property
     def running(self) -> bool:
-        return bool(self._thread and self._thread.is_alive())
+        return bool(self._worker and self._worker.is_alive())
 
     @property
     def event_count(self) -> int:
         with self._lock:
-            return len(self.events) + (1 if self._text_segment else 0)
+            return len(self.events)
 
     def start(self) -> None:
         if self.running:
             return
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
-        self._started = time.monotonic()
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        self._hook.start()
+        self._worker = threading.Thread(target=self._drain, daemon=True)
+        self._worker.start()
 
     def stop(self) -> list[dict[str, Any]]:
+        self._hook.stop()
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=2)
-        self._flush_text()
+        if self._worker:
+            self._worker.join(timeout=3)
+        self._drain_pending()
+        self._record_gestures(self._assembler.flush())
+        self.dropped_records = self._hook.dropped
         with self._lock:
             return list(self.events)
 
-    def _offset_ms(self) -> int:
-        return round((time.monotonic() - self._started) * 1000)
+    # ---------------------------------------------------------------- worker
+
+    def _drain(self) -> None:
+        while not self._stop.is_set():
+            try:
+                record = self._raw.get(timeout=0.05)
+            except queue.Empty:
+                self._record_gestures(self._assembler.tick(self._now_ms()))
+                continue
+            self._consume(record)
+
+    def _drain_pending(self) -> None:
+        while True:
+            try:
+                self._consume(self._raw.get_nowait())
+            except queue.Empty:
+                return
+
+    def _now_ms(self) -> int:
+        return round((time.monotonic() - self._hook.started_at) * 1000)
+
+    def _consume(self, record: dict[str, Any]) -> None:
+        if not record.get("injected") and record.get("kind") in _ENRICHED_KINDS:
+            if not self._enrich(record):
+                return  # 落在任务栏/桌面/照做自己身上，不构成可复用的应用动作
+        self._record_gestures(self._assembler.feed(record))
+
+    # -------------------------------------------------------------- enriching
 
     @staticmethod
     def _is_ignored_context(context: dict[str, Any]) -> bool:
-        """Return whether an event cannot describe a reusable app action.
-
-        Taskbar/desktop activation clicks are useful to a human demonstrator but
-        harmful in a replay: the recorded taskbar slot can point at another app
-        later. The next real application event already gives the executor the
-        window it should activate.
-        """
+        """Whether an event cannot describe a reusable application action."""
 
         if not int(context.get("hwnd") or 0):
             return True
         if str(context.get("title", "")).startswith("照做"):
             return True
-        return str(context.get("class_name", "")) in {
-            "Shell_TrayWnd",
-            "Shell_SecondaryTrayWnd",
-            "Progman",
-            "WorkerW",
-        }
+        return str(context.get("class_name", "")) in IGNORED_WINDOW_CLASSES
 
-    def _append(self, event: dict[str, Any]) -> None:
-        event.setdefault("event_id", str(uuid.uuid4()))
-        event.setdefault("offset_ms", self._offset_ms())
-        with self._lock:
-            self.events.append(event)
+    def _focused_uia(self, hwnd: int, rect: Any) -> Any:
+        cached = self._focus_cache
+        now = time.monotonic()
+        if cached and cached[0] == hwnd and (now - cached[1]) * 1000 < FOCUS_CACHE_MS:
+            return cached[2]
+        snapshot = uia.snapshot_focused(rect)
+        self._focus_cache = (hwnd, now, snapshot)
+        return snapshot
 
-    def _flush_text(self) -> None:
-        segment = self._text_segment
-        if not segment:
-            return
-        self._text_segment = None
-        if int(segment["key_count"]) <= 0:
-            return
-        self._append(segment)
+    def _enrich(self, record: dict[str, Any]) -> bool:
+        """Attach window identity and UIA control identity. False = drop it."""
 
-    def _record_text_key(self, context: dict[str, Any]) -> None:
-        now = self._offset_ms()
-        if (
-            self._text_segment
-            and now - int(self._text_segment["last_key_ms"]) <= 1200
-            and self._text_segment["window"]["hwnd"] == context["hwnd"]
-        ):
-            self._text_segment["key_count"] += 1
-            self._text_segment["last_key_ms"] = now
-            return
-        self._flush_text()
-        self._text_counter += 1
-        self._text_segment = {
-            "kind": "text.input",
-            "placeholder": f"text_{self._text_counter}",
-            "key_count": 1,
-            "last_key_ms": now,
-            "window": context,
-            "uia": uia.snapshot_focused(context.get("rect")),
-            "privacy": "redacted",
-            "offset_ms": now,
-        }
+        is_pointer = record["kind"] != "key.down"
+        hwnd = (
+            windows.window_from_point(record["x"], record["y"])
+            if is_pointer
+            else 0
+        )
+        context = windows.window_context(hwnd or None)
+        if self._is_ignored_context(context):
+            return False
+
+        rect = context.get("rect")
+        record["window"] = context
+        record["context_key"] = context["hwnd"]
+        if is_pointer:
+            record["relative"] = windows.relative_point(record["x"], record["y"], rect)
+            record["uia"] = uia.snapshot_at(record["x"], record["y"], rect)
+            if record["kind"] == "mouse.down":
+                screenshot = self._capture_screenshot()
+                if screenshot:
+                    record["screenshot"] = screenshot
+        else:
+            record["uia"] = self._focused_uia(context["hwnd"], rect)
+        return True
 
     def _capture_screenshot(self) -> str | None:
         if not self.capture_screenshots or ImageGrab is None:
             return None
         name = f"step-{len(self.events) + 1:03d}.jpg"
-        path = self.screenshot_dir / name
         try:
             image = ImageGrab.grab(all_screens=True)
             image.thumbnail((1920, 1080))
-            image.convert("RGB").save(path, "JPEG", quality=78)
+            image.convert("RGB").save(self.screenshot_dir / name, "JPEG", quality=78)
         except Exception:
             return None
         return name
 
-    def _record_click(self, button: str) -> None:
-        context = windows.window_context()
-        if self._is_ignored_context(context):
-            return
-        self._flush_text()
-        x, y = windows.cursor_position()
-        screenshot = self._capture_screenshot()
-        event: dict[str, Any] = {
-            "kind": "pointer.click",
-            "button": button,
-            "absolute": [x, y],
-            "relative": windows.relative_point(x, y, context.get("rect")),
-            "window": context,
-            "uia": uia.snapshot_at(x, y, context.get("rect")),
-        }
-        if screenshot:
-            event["screenshot"] = screenshot
-        self._append(event)
+    # ---------------------------------------------------------------- output
 
-    def _record_key(self, vk: int) -> None:
-        context = windows.window_context()
-        if self._is_ignored_context(context):
+    def _record_gestures(self, gestures: list[dict[str, Any]]) -> None:
+        if not gestures:
             return
+        with self._lock:
+            for gesture in gestures:
+                self.events.append(self._as_event(gesture))
 
-        modifiers = [
-            name for code, name in MODIFIER_VKS.items() if windows.key_down(code)
-        ]
-        shortcut_modifiers = [name for name in modifiers if name != "SHIFT"]
-        if vk in PRINTABLE_VKS and shortcut_modifiers:
-            self._flush_text()
-            key_name = windows.VK_NAMES.get(vk, f"VK_{vk}")
-            self._append(
-                {
-                    "kind": "keyboard.shortcut",
-                    "keys": modifiers + [key_name],
-                    "window": context,
-                    "uia": uia.snapshot_focused(context.get("rect")),
-                }
+    @staticmethod
+    def _as_event(gesture: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a gesture into the recorded-event shape profiles consume."""
+
+        event = {key: value for key, value in gesture.items() if key != "context_key"}
+        kind = str(gesture.get("kind"))
+        if kind not in _POINTER_KINDS:
+            return event
+
+        position = gesture.get("position") or gesture.get("start")
+        if position:
+            event["absolute"] = list(position)
+        if kind == "pointer.drag":
+            event["end_absolute"] = list(gesture["end"])
+            rect = (gesture.get("window") or {}).get("rect")
+            event["end_relative"] = windows.relative_point(
+                gesture["end"][0], gesture["end"][1], rect
             )
-            return
-        if vk in PRINTABLE_VKS or vk == 0x20:
-            self._record_text_key(context)
-            return
-        if vk == 0x08 and self._text_segment:
-            self._text_segment["key_count"] = max(
-                0, int(self._text_segment["key_count"]) - 1
-            )
-            self._text_segment["last_key_ms"] = self._offset_ms()
-            return
-        self._flush_text()
-        self._append(
-            {
-                "kind": "keyboard.press",
-                "key": windows.VK_NAMES.get(vk, f"VK_{vk}"),
-                "window": context,
-                "uia": uia.snapshot_focused(context.get("rect")),
-            }
-        )
-
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            for vk, button in ((0x01, "left"), (0x02, "right")):
-                current = windows.key_down(vk)
-                if current and not self._mouse_states[vk]:
-                    self._record_click(button)
-                self._mouse_states[vk] = current
-
-            for vk in WATCHED_VKS:
-                current = windows.key_down(vk)
-                if current and not self._key_states[vk] and vk not in MODIFIER_VKS:
-                    self._record_key(vk)
-                self._key_states[vk] = current
-
-            if (
-                self._text_segment
-                and self._offset_ms() - int(self._text_segment["last_key_ms"]) > 1200
-            ):
-                self._flush_text()
-            time.sleep(0.02)
+        return event

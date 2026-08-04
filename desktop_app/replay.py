@@ -13,6 +13,11 @@ from shared.profile import ProfileError, resolve_action, validate_profile
 
 PLACEHOLDER_ONLY = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}$")
 
+#: 靠坐标/控件定位的指针类步骤，定位方式完全一致，只有最后动手的方式不同。
+POINTER_KINDS = frozenset(
+    {"pointer.click", "pointer.double_click", "pointer.drag", "pointer.wheel"}
+)
+
 
 class ReplayEngine:
     MIN_INTER_STEP_WAIT_SECONDS = 0.08
@@ -302,7 +307,7 @@ class ReplayEngine:
                 self._wait(0.08)
 
             kind = step["kind"]
-            if kind == "pointer.click":
+            if kind in POINTER_KINDS:
                 bounds = None
                 if hwnd and isinstance(locator.get("uia"), dict):
                     bounds = uia.find_bounds(
@@ -324,7 +329,23 @@ class ReplayEngine:
                     if used_fallback:
                         degraded.append(step["id"])
                 locator_results.append({"step_id": step["id"], "used": locator_used})
-                windows.click(x, y, step.get("args", {}).get("button", "left"))
+                args = step.get("args", {})
+                button = args.get("button", "left")
+                if kind == "pointer.click":
+                    windows.click(x, y, button)
+                elif kind == "pointer.double_click":
+                    windows.double_click(x, y, button)
+                elif kind == "pointer.wheel":
+                    windows.scroll(x, y, int(args.get("delta", 0)), bool(args.get("horizontal")))
+                else:  # pointer.drag
+                    end_x, end_y, end_fallback = windows.point_for_window(
+                        hwnd,
+                        args.get("end_relative"),
+                        args.get("end_absolute") or [x, y],
+                    )
+                    if end_fallback:
+                        degraded.append(step["id"])
+                    windows.drag(x, y, end_x, end_y, button)
             elif kind == "keyboard.shortcut":
                 if hwnd and isinstance(locator.get("uia"), dict):
                     uia.focus(hwnd, locator["uia"])

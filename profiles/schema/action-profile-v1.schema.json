@@ -257,6 +257,9 @@
         "kind": {
           "enum": [
             "pointer.click",
+            "pointer.double_click",
+            "pointer.drag",
+            "pointer.wheel",
             "keyboard.press",
             "keyboard.shortcut",
             "keyboard.type",

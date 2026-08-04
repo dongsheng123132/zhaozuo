@@ -41,6 +41,10 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_RIGHTDOWN = 0x0008
 MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x1000
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 INPUT_KEYBOARD = 1
@@ -136,6 +140,28 @@ NAME_TO_VK = {name: code for code, name in VK_NAMES.items()}
 
 def key_down(vk: int) -> bool:
     return bool(user32.GetAsyncKeyState(vk) & 0x8000)
+
+
+GA_ROOT = 2
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.WindowFromPoint.argtypes = [POINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+
+
+def window_from_point(x: int, y: int) -> int:
+    """Top-level window under a screen point.
+
+    点击的归属必须按坐标算，不能用 GetForegroundWindow：鼠标按下的那一刻前台
+    还没切过去，点另一个应用的第一下会被记到上一个窗口名下，甚至因为看起来像
+    "照做自己的窗口"而被丢弃。跨应用工作流（Excel → 微信）的切换那一下最容易中招。
+    """
+
+    hwnd = user32.WindowFromPoint(POINT(int(x), int(y)))
+    if not hwnd:
+        return 0
+    root = user32.GetAncestor(hwnd, GA_ROOT)
+    return int(root or hwnd)
 
 
 def cursor_position() -> tuple[int, int]:
@@ -367,15 +393,81 @@ def point_for_window(
     return int(absolute[0]), int(absolute[1]), True
 
 
+_BUTTON_FLAGS = {
+    "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+    "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+    "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+}
+
+
+def _button_flags(button: str) -> tuple[int, int]:
+    return _BUTTON_FLAGS.get(str(button).lower(), _BUTTON_FLAGS["left"])
+
+
 def click(x: int, y: int, button: str = "left") -> None:
+    down, up = _button_flags(button)
     user32.SetCursorPos(int(x), int(y))
-    if button == "right":
-        down, up = MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
-    else:
-        down, up = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
     user32.mouse_event(down, 0, 0, 0, 0)
     time.sleep(0.04)
     user32.mouse_event(up, 0, 0, 0, 0)
+
+
+def double_click(x: int, y: int, button: str = "left") -> None:
+    """Two clicks inside the system double-click time.
+
+    分成两次独立 click() 会被目标软件当成两次单击 —— 双击打开文件就变成了
+    重命名。两次之间的间隔必须短于系统的双击时间。
+    """
+
+    interval = max(int(user32.GetDoubleClickTime()) / 1000 / 4, 0.02)
+    down, up = _button_flags(button)
+    user32.SetCursorPos(int(x), int(y))
+    for index in range(2):
+        user32.mouse_event(down, 0, 0, 0, 0)
+        time.sleep(0.02)
+        user32.mouse_event(up, 0, 0, 0, 0)
+        if index == 0:
+            time.sleep(interval)
+
+
+def drag(
+    start_x: int, start_y: int, end_x: int, end_y: int,
+    button: str = "left", steps: int = 12,
+) -> None:
+    """Press, move through intermediate points, release.
+
+    很多控件靠 WM_MOUSEMOVE 才认得出这是拖拽；直接从起点跳到终点再抬起，
+    会被当成在终点点了一下。中间点必须真的走过去。
+    """
+
+    down, up = _button_flags(button)
+    user32.SetCursorPos(int(start_x), int(start_y))
+    time.sleep(0.02)
+    user32.mouse_event(down, 0, 0, 0, 0)
+    time.sleep(0.03)
+    for index in range(1, max(steps, 1) + 1):
+        ratio = index / max(steps, 1)
+        user32.SetCursorPos(
+            round(start_x + (end_x - start_x) * ratio),
+            round(start_y + (end_y - start_y) * ratio),
+        )
+        time.sleep(0.012)
+    time.sleep(0.03)
+    user32.mouse_event(up, 0, 0, 0, 0)
+
+
+def scroll(x: int, y: int, delta: int, horizontal: bool = False) -> None:
+    """Wheel notches at a point. delta 是 WHEEL_DELTA(120) 的整数倍。"""
+
+    user32.SetCursorPos(int(x), int(y))
+    flag = MOUSEEVENTF_HWHEEL if horizontal else MOUSEEVENTF_WHEEL
+    remaining = int(delta)
+    notch = 120 if remaining > 0 else -120
+    while remaining != 0:
+        step = notch if abs(remaining) >= 120 else remaining
+        user32.mouse_event(flag, 0, 0, step, 0)
+        remaining -= step
+        time.sleep(0.02)
 
 
 def press_key(name: str) -> None:

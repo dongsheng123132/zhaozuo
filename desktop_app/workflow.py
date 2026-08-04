@@ -101,8 +101,19 @@ def event_summary(event: dict[str, Any]) -> str:
     window = str(event.get("window", {}).get("title", "")).strip() or "未知窗口"
     short_window = window if len(window) <= 34 else window[:31] + "…"
     kind = event.get("kind")
+    button = {"left": "", "right": "右键", "middle": "中键"}.get(
+        str(event.get("button", "left")), ""
+    )
     if kind == "pointer.click":
-        return f"点击 · {short_window}"
+        return f"{button}点击 · {short_window}"
+    if kind == "pointer.double_click":
+        return f"{button}双击 · {short_window}"
+    if kind == "pointer.drag":
+        return f"{button}拖拽 · {short_window}"
+    if kind == "pointer.wheel":
+        delta = int(event.get("delta", 0))
+        direction = "横向滚动" if event.get("horizontal") else ("向上滚动" if delta > 0 else "向下滚动")
+        return f"{direction} {abs(delta) // 120} 格 · {short_window}"
     if kind == "keyboard.shortcut":
         return f"快捷键 {'+'.join(event.get('keys', []))} · {short_window}"
     if kind == "keyboard.press":
@@ -164,7 +175,7 @@ def build_profile(
             "description": event_summary(event),
             "captured_offset_ms": event.get("offset_ms", 0),
         }
-        if kind == "pointer.click":
+        if kind in ("pointer.click", "pointer.double_click", "pointer.drag", "pointer.wheel"):
             locator = {
                 "window": window_locator,
                 "relative": event.get("relative"),
@@ -172,13 +183,18 @@ def build_profile(
             }
             if event.get("uia"):
                 locator["uia"] = event["uia"]
-            base.update(
-                {
-                    "kind": "pointer.click",
-                    "locator": locator,
-                    "args": {"button": event.get("button", "left")},
+            if kind == "pointer.wheel":
+                args: dict[str, Any] = {
+                    "delta": int(event.get("delta", 0)),
+                    "horizontal": bool(event.get("horizontal")),
                 }
-            )
+            else:
+                args = {"button": event.get("button", "left")}
+            if kind == "pointer.drag":
+                # 终点和起点一样重要：拖到哪里决定了选中了什么、放到了哪。
+                args["end_relative"] = event.get("end_relative")
+                args["end_absolute"] = event.get("end_absolute")
+            base.update({"kind": kind, "locator": locator, "args": args})
         elif kind == "keyboard.shortcut":
             locator = {"window": window_locator}
             if event.get("uia"):

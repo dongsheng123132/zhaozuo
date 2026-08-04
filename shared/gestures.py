@@ -116,6 +116,21 @@ class GestureAssembler:
     def _context_of(self, record: dict[str, Any]) -> Any:
         return record.get("context_key")
 
+    @staticmethod
+    def _enrichment(record: dict[str, Any]) -> dict[str, Any]:
+        """Carry the enriching context of the *originating* record onto the gesture.
+
+        富化（窗口身份、UIA 控件）由采集层在事件到达当时做好；装配器只透传。
+        关键是取**起始**那条记录的富化：拖拽要的是按下时的控件，不是抬起时的；
+        文本段要的是第一个键落在哪个输入框。
+        """
+
+        return {
+            key: record[key]
+            for key in ("window", "uia", "relative")
+            if record.get(key) is not None
+        }
+
     # ------------------------------------------------------------- buffering
 
     def _flush_text(self, out: list[dict[str, Any]]) -> None:
@@ -215,6 +230,7 @@ class GestureAssembler:
                     "offset_ms": at_ms,
                     "duration_ms": max(int(record["t"]) - at_ms, 0),
                     "context_key": self._context_of(down),
+                    **self._enrichment(down),
                 }
             )
             return
@@ -234,6 +250,8 @@ class GestureAssembler:
                     "position": list(start),
                     "offset_ms": int(pending["offset_ms"]),
                     "context_key": pending.get("context_key"),
+                    **{k: v for k, v in pending.items()
+                       if k in ("window", "uia", "relative")},
                 }
             )
             return
@@ -247,6 +265,7 @@ class GestureAssembler:
             "offset_ms": at_ms,
             "context_key": self._context_of(down),
             "_at_ms": at_ms,
+            **self._enrichment(down),
         }
 
     def _on_wheel(self, record: dict[str, Any], out: list[dict[str, Any]]) -> None:
@@ -274,6 +293,7 @@ class GestureAssembler:
             "offset_ms": now,
             "context_key": self._context_of(record),
             "_last_ms": now,
+            **self._enrichment(record),
         }
 
     def _on_key_down(self, record: dict[str, Any], out: list[dict[str, Any]]) -> None:
@@ -299,6 +319,7 @@ class GestureAssembler:
                     "keys": modifiers + [key_name(vk)],
                     "offset_ms": now,
                     "context_key": self._context_of(record),
+                    **self._enrichment(record),
                 }
             )
             return
@@ -320,6 +341,7 @@ class GestureAssembler:
                 "key": key_name(vk),
                 "offset_ms": now,
                 "context_key": self._context_of(record),
+                **self._enrichment(record),
             }
         )
 
@@ -349,6 +371,7 @@ class GestureAssembler:
                 "offset_ms": now,
                 "context_key": context,
                 "_last_ms": now,
+                **self._enrichment(record),
             }
             self._text = segment
         assert segment is not None
