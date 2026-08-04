@@ -72,28 +72,34 @@ def main() -> int:
         except queue.Empty:
             break
 
+    seen = [r for r in drained if r.get("kind") in ("key.down", "key.up") and r.get("vk") == VK_F13]
+
+    # 只喂我们自己合成的那几条，不喂机器上的环境输入 —— 否则这个数字反映的是
+    # "跑的时候有没有人在打字"，而不是被测的性质。
     assembler = GestureAssembler()
     gestures = []
-    for record in drained:
+    for record in seen:
         gestures.extend(assembler.feed(record))
     gestures.extend(assembler.flush())
 
-    seen = [r for r in drained if r.get("kind") in ("key.down", "key.up") and r.get("vk") == VK_F13]
     report.update(
         {
             "raw_records": len(drained),
+            "ambient_records": len(drained) - len(seen),
             "f13_events_captured": len(seen),
             "all_marked_injected": all(r.get("injected") for r in seen) if seen else False,
             "dropped": listener.dropped,
-            "gestures": len(gestures),
-            "gesture_kinds": sorted({str(g.get("kind")) for g in gestures}),
+            # 合成输入必须在装配层被丢掉，否则回放时会一边放一边录自我叠加。
+            "gestures_from_injected": len(gestures),
         }
     )
-    # 每次按键各产生 down+up 两条；少一条就是钩子漏事件，多一条就是重复投递。
     report["ok"] = (
         report["hook_installed"]
+        # 每次按键各产生 down+up 两条；少一条是钩子漏事件，多一条是重复投递。
         and report["f13_events_captured"] == PRESSES * 2
         and report["dropped"] == 0
+        and report["all_marked_injected"]
+        and report["gestures_from_injected"] == 0
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["ok"] else 1
