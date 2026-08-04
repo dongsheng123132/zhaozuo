@@ -19,6 +19,7 @@ from desktop_app.workflow import (
     merge_recording_segments,
     save_recording,
 )
+from shared.effects import assess
 from shared.profile import ProfileError
 from shared.runtime import data_root
 
@@ -642,6 +643,14 @@ class ZhaozuoApp:
             lines = ["没有捕获到目标软件操作，请重新演示。"]
         elif detected_effect:
             lines[-1] += "  ⚠ 最终对外动作"
+        else:
+            # 守卫放行时也必须亮出理由。否则「查过了，判定不是对外动作」和
+            # 「压根没查」在界面上一模一样，而 effects.py 允许 fail-open 的
+            # 全部正当性就建立在「放行结论可被审阅」这一句上。
+            verdict = assess(self.goal_var.get(), events)
+            lines.append("")
+            lines.append("未判定为对外动作，依据：" + "；".join(verdict["reasons"]))
+            lines.append("若这一步其实会发出去，请勾选下方「最终一步是对外动作」。")
         self._set_text(self.steps_text, "\n".join(lines))
         placeholders = list(
             next(iter(self.profile["actions"].values()))["input_schema"]["properties"]

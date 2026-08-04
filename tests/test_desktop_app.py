@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from desktop_app.replay import ReplayEngine
+from shared.effects import assess
 from desktop_app.capture import EventRecorder
 from desktop_app import windows
 from desktop_app.workflow import (
@@ -175,6 +176,34 @@ class DesktopWorkflowTests(unittest.TestCase):
         calc = build_profile("s", "算一下 7+8",
                              ends_in("计算器", "ApplicationFrameWindow", "calc.exe"), "")
         self.assertNotIn("effect", next(iter(calc["actions"].values()))["steps"][-1])
+
+    def test_release_decision_always_carries_reviewable_reasons(self) -> None:
+        """effects.py 允许第三路 fail-open，靠的是「放行结论可被审阅」。
+
+        那句话只有在放行结论真的带着理由、且理由真的被交到人面前时才成立。
+        理由为空 = 界面上「查过了判定不守卫」和「压根没查」长得一模一样。
+        """
+
+        window = {"hwnd": 1, "title": "未命名 - 记事本", "class_name": "Notepad",
+                  "process": "notepad.exe", "rect": [0, 0, 800, 600]}
+        released = assess("整理会议纪要", [{"kind": "pointer.click", "window": window}])
+        self.assertFalse(released["guarded"])
+        self.assertTrue(released["reasons"], "放行却没有给出任何理由")
+        # 理由必须说清「看了哪三路」，而不是一句空话。
+        joined = "；".join(released["reasons"])
+        self.assertIn("goal~", joined)
+        self.assertIn("app_family=", joined)
+
+        guarded = assess("回复客户", [{"kind": "pointer.click", "window": {
+            "hwnd": 1, "title": "微信", "class_name": "WeChatMainWndForPC",
+            "process": "weixin.exe", "rect": [0, 0, 800, 600]}}])
+        self.assertTrue(guarded["guarded"])
+        self.assertTrue(guarded["reasons"], "守卫却说不出是哪一路命中的")
+
+        # 没有任何事件时也不能崩，且同样要给理由。
+        empty = assess("", [])
+        self.assertFalse(empty["guarded"])
+        self.assertTrue(empty["reasons"])
 
     def test_wechat_recording_infers_effect_and_semantic_inputs(self) -> None:
         events = [dict(event) for event in self.events]
