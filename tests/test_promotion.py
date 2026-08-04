@@ -84,7 +84,7 @@ class PromotionLadderTests(unittest.TestCase):
 
     def _run(self, *argv: str) -> int:
         args = self.parser.parse_args([*argv, "--json"])
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return args.handler(args)
 
     def test_draft_cannot_be_promoted_without_evidence(self) -> None:
@@ -110,12 +110,45 @@ class PromotionLadderTests(unittest.TestCase):
             "--report", str(self._report("bad2.json", ok=False)),
             "--app-version", "16.0.17", "--varied",
         )
-        runs = self._load()["evidence"]["regression_runs"]
+        profile = self._load()
+        runs = profile["evidence"]["regression_runs"]
         self.assertEqual([run["result"] for run in runs], ["fail", "fail"])
+        # 失败的回放不抬 demonstrations，也不把该版本写进对外兼容声明 ——
+        # 否则工具等于自己伪造了一条"这版能跑"的证据。
+        self.assertEqual(profile["evidence"].get("demonstrations", 0), 0)
+        self.assertEqual(profile.get("compatibility", {}).get("app_versions", []), [])
+        # 版本号仍留在 run 上，失败史查得到。
+        self.assertEqual([run["app_version"] for run in runs], ["16.0.17", "16.0.17"])
 
         code = self._run("promote", str(self.profile_path), "--to", "validated", "--by", "老何")
         self.assertEqual(code, 1)
         self.assertEqual(self._load()["status"], "draft")
+
+    def test_failures_cannot_be_laundered_into_a_compatibility_claim(self) -> None:
+        """两次失败 + 一次别处的成功，凑不出 validated。
+
+        校验器只数"有没有通过的回归"，数不出"通过的是不是声明的那个版本"。
+        所以污染必须挡在 record-run，而不是指望 promote 再兜一次。
+        """
+
+        for index, version in enumerate(("16.0.17", "16.0.18"), 1):
+            self._run(
+                "record-run", str(self.profile_path),
+                "--report", str(self._report(f"fail{index}.json", ok=False)),
+                "--app-version", version, "--varied",
+            )
+        # 一次成功，但操作者没声明变化过、也没声明是哪个版本上跑的。
+        self._run(
+            "record-run", str(self.profile_path),
+            "--report", str(self._report("pass.json")),
+        )
+
+        code = self._run("promote", str(self.profile_path), "--to", "validated", "--by", "老何")
+        self.assertEqual(code, 1)
+        profile = self._load()
+        self.assertEqual(profile["status"], "draft")
+        self.assertNotIn("16.0.17", profile.get("compatibility", {}).get("app_versions", []))
+        self.assertEqual(profile["evidence"].get("demonstrations", 0), 0)
 
     def test_full_ladder_records_an_auditable_chain(self) -> None:
         for index in (1, 2):

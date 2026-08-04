@@ -94,6 +94,11 @@ def _record_run(args: argparse.Namespace) -> int:
 
     回归记录只能来自一次真实执行的报告，不能手写 —— 否则 validated 的证据链
     第一环就是空的。
+
+    失败的回放照样要记（失败史有价值），但**只有通过的回放**能往上抬
+    `demonstrations` 和 `compatibility.app_versions` —— 那两个字段是对外的断言，
+    不是流水账。在某版本上失败一次却把该版本写进兼容范围，等于用工具自己
+    伪造了一条"这版能跑"的证据。
     """
 
     path = Path(args.profile)
@@ -106,9 +111,10 @@ def _record_run(args: argparse.Namespace) -> int:
             "报告显示这次没有真正执行（dry-run / 停在确认前 / 目标未通过校验），不能作为回归证据"
         )
 
+    passed = bool(report.get("ok"))
     run = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
-        "result": "pass" if report.get("ok") else "fail",
+        "result": "pass" if passed else "fail",
         "action_id": report.get("action_id"),
         "evidence_summary": report.get("evidence_summary"),
         "degraded_steps": report.get("degraded_steps") or [],
@@ -126,13 +132,26 @@ def _record_run(args: argparse.Namespace) -> int:
 
     evidence = profile.setdefault("evidence", {})
     evidence.setdefault("regression_runs", []).append(run)
+
+    ignored: list[str] = []
     if args.varied:
         # 工具无法自证这次演示"变化过"，只能记录操作者的明示断言。
-        evidence["demonstrations"] = int(evidence.get("demonstrations") or 0) + 1
+        # 但一次失败的演示证明不了动作能跑，不该抬高 demonstrations。
+        if passed:
+            evidence["demonstrations"] = int(evidence.get("demonstrations") or 0) + 1
+        else:
+            ignored.append("--varied（本次回放未通过，不计入 demonstrations）")
     if args.app_version:
-        versions = profile.setdefault("compatibility", {}).setdefault("app_versions", [])
-        if args.app_version not in versions:
-            versions.append(args.app_version)
+        if passed:
+            versions = profile.setdefault("compatibility", {}).setdefault("app_versions", [])
+            if args.app_version not in versions:
+                versions.append(args.app_version)
+        else:
+            # 版本号仍留在这条 run 上，失败史查得到；只是不进对外的兼容声明。
+            ignored.append(
+                f"--app-version {args.app_version}"
+                "（本次回放未通过，不写入 compatibility.app_versions）"
+            )
 
     backup = _write_profile(path, profile)
     _emit(
@@ -142,10 +161,13 @@ def _record_run(args: argparse.Namespace) -> int:
             "recorded": run,
             "regression_runs": len(evidence["regression_runs"]),
             "demonstrations": evidence.get("demonstrations", 0),
+            "ignored_claims": ignored,
             "backup": str(backup),
         },
         args.json,
     )
+    if ignored:
+        print("忽略的声明: " + "; ".join(ignored), file=sys.stderr)
     return 0
 
 
