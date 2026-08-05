@@ -21,18 +21,35 @@
 
 外部录制回放**不表示目标软件符合影核协议**。Chrome、WPS 或微信能被照做操作，只代表存在一条受约束的兼容路径。目标软件以后提供正式 CLI、API 或 Action Core 时，档案应优先切换到原生入口。
 
+## 格式：兼容动作档案 v1（已冻结）
+
+档案格式的规范性文档是 **[docs/ACTION-PROFILE-V1.md](docs/ACTION-PROFILE-V1.md)**，Schema 在 [`profiles/schema/action-profile-v1.schema.json`](profiles/schema/action-profile-v1.schema.json)。v1 于 2026-08 冻结，此后只做向后兼容的增补。
+
+格式的重心不在"怎么点"，在三件今天的 GUI Agent 普遍做不到的事：
+
+| 关切 | v1 的回答 |
+|---|---|
+| 这是哪一个业务动作？ | 稳定唯一的 **Action ID**，中文目标同样不撞车 |
+| 这一步会不会造成不可撤销的后果？ | **effect** 声明 + 生效当下确认 + **目标身份断言** |
+| 它成功了吗？ | **success_evidence**，且 `validated` 不得只靠窗口标题 |
+
+校验器会**执行**这些规则，而不只是记录它们：拿不出证据的 `validated` 声明会被拒收（缺兼容范围、无通过回归、无提升人、成功证据过弱、对外动作缺目标断言、只靠绝对坐标定位）。
+
 ## 当前能力
 
-- 捕获 Windows 全局点击、快捷键和输入焦点；
+- 用低级钩子逐事件捕获全局输入：点击、双击、拖拽、滚轮、快捷键与输入焦点；
+- 队列满时被丢弃的输入会计入会话摘要并在界面告警，缺步的录制不会看起来像完整录制；
 - 采集点击处或输入焦点的 Windows UI Automation 控件身份；
 - 文本默认只保存占位符和长度，不保存原文；
 - 支持分段补录和应用重启后恢复最近动作；
 - 生成带稳定 Action ID、输入契约、风险和成功证据的候选档案；
 - 按“UIA → 窗口相对位置 → 绝对坐标”逐级回放并报告降级；
-- 发送、发布、点赞等对外动作在最终一步再次确认；
+- 回放等的是可观察状态（窗口/控件是否就绪），不是录制时的秒表；无锚点的步骤单独计为降级；
+- 发送、发布、点赞等对外动作在最终一步再次确认，并在执行前断言目标窗口身份；
+- 成功证据引擎覆盖窗口、UIA 值与开关态、文件、剪贴板、进程；验不了的证据种类判为未通过，不默默放行；
 - 默认 dry-run，真实执行必须显式授权，执行中可按 Esc 中止。
 
-尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、跨版本自动回归和代码签名。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
+尚未完成：完整 UIA 树、多模态步骤理解、OCR、档案库、聊天软件会话流证据、代码签名。进程声明 per-monitor DPI 感知，坐标是物理像素；档案记录录制时的缩放，回放时不一致会被报出来（`python scripts/dpi-check.py` 可在任意机器上自证这台机器的折算比例）。当前步骤提炼使用本地规则，不应宣传为已经具备通用 AI 学习能力。
 
 ## 快速开始
 
@@ -73,6 +90,20 @@ python -m executor.cli plan profiles/chrome/open-url.action-profile.json `
 ```
 
 `plan` 只解析变量并输出执行计划，不控制键盘鼠标。
+
+对着真机跑一遍成功证据（同样不执行任何步骤），以及把一次真实回放记入回归、提升档案状态：
+
+```powershell
+python -m executor.cli evidence <profile> <action> --json
+
+python -m executor.cli record-run <profile> --report <replay-report.json> `
+  --app-version 16.0.17 --dpi-scale 1.5 --varied --json
+
+python -m executor.cli promote <profile> --to validated --by <提升人> --json
+```
+
+`record-run` 拒绝 dry-run 报告，`promote` 在证据不足时拒绝并且不写文件 ——
+`validated` 是一条可审计的链，不是一个能手改的字段。
 
 ## 学习流程
 

@@ -266,6 +266,85 @@ def find_bounds(
         return None
 
 
+UIA_VALUE_PATTERN_ID = 10002
+UIA_TOGGLE_PATTERN_ID = 10015
+UIA_TEXT_PATTERN_ID = 10014
+
+TOGGLE_STATES = {0: "off", 1: "on", 2: "indeterminate"}
+
+
+def find_element(locator: dict[str, Any], hwnd: int | None = None) -> Any:
+    """Find one element by locator, from a window or from the desktop root."""
+
+    automation = _automation()
+    if not automation:
+        return None
+    condition = _condition(automation, locator)
+    if condition is None:
+        return None
+    try:
+        root = (
+            automation.ElementFromHandle(hwnd)
+            if hwnd
+            else automation.GetRootElement()
+        )
+        return root.FindFirst(TREE_SCOPE_SUBTREE, condition)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def element_value(locator: dict[str, Any], hwnd: int | None = None) -> str | None:
+    """Readable value of a control: ValuePattern first, then Name.
+
+    ValuePattern 是编辑框/地址栏的真实内容；Name 是无障碍标签。
+    读不到返回 None，让上层把它记成"没验到"，而不是空字符串"验到了空值"。
+    """
+
+    element = find_element(locator, hwnd)
+    if not element:
+        return None
+    try:
+        pattern = element.GetCurrentPattern(UIA_VALUE_PATTERN_ID)
+        if pattern:
+            value = getattr(pattern.QueryInterface(_value_interface()), "CurrentValue", None)
+            if value is not None:
+                return str(value)
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    name = _string_property(element, "CurrentName")
+    return name or None
+
+
+def toggle_state(locator: dict[str, Any], hwnd: int | None = None) -> str | None:
+    """on / off / indeterminate —— 点赞、关注、收藏这类动作的真实成功判据。"""
+
+    element = find_element(locator, hwnd)
+    if not element:
+        return None
+    try:
+        pattern = element.GetCurrentPattern(UIA_TOGGLE_PATTERN_ID)
+        if not pattern:
+            return None
+        state = getattr(
+            pattern.QueryInterface(_toggle_interface()), "CurrentToggleState", None
+        )
+        return TOGGLE_STATES.get(int(state)) if state is not None else None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _value_interface() -> Any:
+    from comtypes.gen.UIAutomationClient import IUIAutomationValuePattern
+
+    return IUIAutomationValuePattern
+
+
+def _toggle_interface() -> Any:
+    from comtypes.gen.UIAutomationClient import IUIAutomationTogglePattern
+
+    return IUIAutomationTogglePattern
+
+
 def focus(hwnd: int, locator: dict[str, Any]) -> bool:
     automation = _automation()
     if not automation or not hwnd:

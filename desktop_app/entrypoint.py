@@ -11,13 +11,16 @@ from shared.runtime import data_root
 
 
 def _self_test() -> dict[str, Any]:
-    from desktop_app import uia, windows
+    from desktop_app import dpi, uia, windows
     from desktop_app.capture import ImageGrab
 
     checks: dict[str, bool] = {
         "windows_input_size": ctypes.sizeof(windows.INPUT) in {28, 40},
         "uia_available": uia.available(),
         "pillow_image_grab": ImageGrab is not None,
+        # 不感知 DPI 的进程拿到的是被折算过的坐标，而 UIA 给的是物理像素 ——
+        # 主屏带缩放的机器上，UIA 定位到的按钮会被点到别处。
+        "dpi_aware": dpi.current_awareness() in ("system", "per_monitor"),
     }
 
     writable_root = data_root()
@@ -49,6 +52,8 @@ def _self_test() -> dict[str, Any]:
         "ok": all(checks.values()),
         "mode": "self_test",
         "data_root": str(writable_root),
+        "dpi_awareness": dpi.current_awareness(),
+        "system_dpi": dpi.system_dpi(),
         "checks": checks,
     }
 
@@ -79,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    # 必须在创建任何窗口之前声明，否则该进程这辈子都是被折算过的坐标。
+    from desktop_app.dpi import ensure_per_monitor_awareness
+
+    ensure_per_monitor_awareness()
+
     parser = build_parser()
     args = parser.parse_args()
     if args.self_test:
@@ -95,3 +105,9 @@ def main() -> int:
     from desktop_app.app import main as run_app
 
     return run_app()
+
+
+if __name__ == "__main__":
+    # 没有这个守卫时，`python -m desktop_app.entrypoint --self-test` 会把模块体跑一遍
+    # 就退出——退出码 0、零输出、什么都没检查。对调用方来说那读作"自检通过"。
+    raise SystemExit(main())

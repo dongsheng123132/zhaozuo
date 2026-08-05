@@ -18,7 +18,7 @@ def data_root(
     env: Mapping[str, str] | None = None,
     project_root: str | Path | None = None,
 ) -> Path:
-    """Return the writable root for recordings and future user state.
+    r"""Return the writable root for recordings and future user state.
 
     Source checkouts keep data under the repository. Frozen builds use
     ``%LOCALAPPDATA%\Zhaozuo`` unless a ``portable.mode`` marker sits beside

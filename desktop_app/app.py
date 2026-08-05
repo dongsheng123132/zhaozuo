@@ -10,6 +10,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
+from desktop_app import dpi as dpi_module
 from desktop_app.capture import EventRecorder, ImageGrab
 from desktop_app.replay import ReplayEngine
 from desktop_app.workflow import (
@@ -18,6 +19,7 @@ from desktop_app.workflow import (
     merge_recording_segments,
     save_recording,
 )
+from shared.effects import assess
 from shared.profile import ProfileError
 from shared.runtime import data_root
 
@@ -39,6 +41,12 @@ FONT = "Microsoft YaHei UI"
 class ZhaozuoApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
+        # 进程声明了 per-monitor 感知，窗口尺寸从此是物理像素 —— 界面必须自己按
+        # 缩放放大，否则在 125%/150% 的机器上会比以前小一圈。
+        self.scale = dpi_module.scale_for(
+            dpi_module.window_dpi(self.root.winfo_id()) or dpi_module.system_dpi()
+        )
+        self.root.tk.call("tk", "scaling", self.scale * 96 / 72)
         self.root.title("照做")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -51,6 +59,7 @@ class ZhaozuoApp:
         self.session_dir: Path | None = None
         self.recorder: EventRecorder | None = None
         self.recorded_events: list[dict] = []
+        self.recorded_dropped = 0
         self.recording_mode = "new"
         self.current_segment_index = 0
         self.profile: dict | None = None
@@ -58,6 +67,7 @@ class ZhaozuoApp:
         self.replay = ReplayEngine()
         self.pending_effect_step_id: str | None = None
         self.pending_effect_label = ""
+        self.pending_target_fingerprint = ""
         self.worker_messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self._drag_origin: tuple[int, int, int, int] | None = None
 
@@ -67,8 +77,13 @@ class ZhaozuoApp:
         self._refresh_pill()
         self.root.after(250, self._tick)
 
+    def _px(self, value: float) -> int:
+        """Logical pixels → physical pixels for this display."""
+
+        return round(value * self.scale)
+
     def _default_pill_geometry(self) -> str:
-        width, height = 184, 56
+        width, height = self._px(184), self._px(56)
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         return f"{width}x{height}+{screen_w - width - 24}+{screen_h // 2 - 28}"
@@ -76,8 +91,8 @@ class ZhaozuoApp:
     def _build_pill(self) -> None:
         self.pill = tk.Canvas(
             self.root,
-            width=184,
-            height=56,
+            width=self._px(184),
+            height=self._px(56),
             bg=BG,
             highlightthickness=0,
             cursor="hand2",
@@ -129,8 +144,10 @@ class ZhaozuoApp:
         color = RED if self.state == "recording" else GREEN
         if self.state == "executing":
             color = AMBER
-        self._rounded_rect(2, 2, 182, 54, 18, fill=CARD, outline="#303b58", width=1)
-        self.pill.create_oval(14, 16, 38, 40, fill=color, outline="")
+        px = self._px
+        self._rounded_rect(px(2), px(2), px(182), px(54), px(18),
+                           fill=CARD, outline="#303b58", width=1)
+        self.pill.create_oval(px(14), px(16), px(38), px(40), fill=color, outline="")
         if self.state == "recording":
             elapsed = int(time.monotonic() - self.started_at)
             label = f"停止 · {elapsed // 60:02d}:{elapsed % 60:02d}"
@@ -142,22 +159,22 @@ class ZhaozuoApp:
             label = "开始演示"
             sub = "你做一遍，它照做"
         self.pill.create_text(
-            50,
-            22,
+            px(50),
+            px(22),
             text=label,
             anchor="w",
             fill=TEXT,
             font=(FONT, 11, "bold"),
         )
         self.pill.create_text(
-            50,
-            39,
+            px(50),
+            px(39),
             text=sub,
             anchor="w",
             fill=MUTED,
             font=(FONT, 8),
         )
-        self.pill.create_text(168, 28, text="⋮", fill=MUTED, font=(FONT, 16))
+        self.pill.create_text(px(168), px(28), text="⋮", fill=MUTED, font=(FONT, 16))
 
     def _pill_press(self, event: tk.Event) -> None:
         self._drag_origin = (
@@ -190,8 +207,8 @@ class ZhaozuoApp:
     def _build_dashboard(self) -> None:
         self.dashboard = tk.Toplevel(self.root)
         self.dashboard.title("照做 · 任务工作台")
-        self.dashboard.geometry("640x760")
-        self.dashboard.minsize(580, 660)
+        self.dashboard.geometry(f"{self._px(640)}x{self._px(760)}")
+        self.dashboard.minsize(self._px(580), self._px(660))
         self.dashboard.configure(bg=BG)
         self.dashboard.protocol("WM_DELETE_WINDOW", self.dashboard.withdraw)
 
@@ -448,6 +465,7 @@ class ZhaozuoApp:
             self.session_id = str(summary.get("session_id", session_dir.name))
             self.session_dir = session_dir
             self.recorded_events = merge_recording_segments([], events)
+            self.recorded_dropped = int(summary.get("dropped_records") or 0)
             self.current_segment_index = max(
                 (
                     int(event.get("segment_index") or 1)
@@ -487,7 +505,10 @@ class ZhaozuoApp:
         if placeholders:
             self.inputs_text.insert("1.0", "\n".join(f"{name}=" for name in placeholders))
         self.status_var.set(f"已恢复最近动作 · {len(action['steps'])} 步")
-        self.report_var.set(f"已恢复会话 {self.session_id}；请重新填写回放输入。")
+        restored = f"已恢复会话 {self.session_id}；请重新填写回放输入。"
+        if self.recorded_dropped:
+            restored += f"\n⚠ 这次录制丢失过 {self.recorded_dropped} 条输入，档案可能缺步。"
+        self.report_var.set(restored)
         self.append_button.configure(state="normal")
 
     def show_dashboard(self) -> None:
@@ -509,6 +530,22 @@ class ZhaozuoApp:
             self.replay.cancel()
             self.status_var.set("正在停止执行…")
 
+    @staticmethod
+    def _describe_target(target: dict) -> str:
+        """人能读懂的目标身份。空字段不编造，直接说不知道。"""
+
+        if not target:
+            return "未解析到目标窗口"
+        title = str(target.get("title") or "").strip() or "(无标题)"
+        process = str(target.get("process") or "").strip() or "进程未知"
+        confidence = target.get("confidence") or "unknown"
+        note = ""
+        if target.get("ambiguous"):
+            note = f"⚠ 有 {target.get('candidates')} 个同名候选"
+        elif confidence == "weak":
+            note = "⚠ 仅靠标题匹配"
+        return f"{title}（{process}，身份 {confidence}）{note}".strip()
+
     def continue_recording(self) -> None:
         if not self.profile or not self.recorded_events:
             self.report_var.set("请先完成第一段演示，再继续补录。")
@@ -520,6 +557,7 @@ class ZhaozuoApp:
             self.effect_var.set(True)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
+        self.pending_target_fingerprint = ""
         self.execute_button.configure(text="真实执行")
         self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
         self.recording_mode = "append" if append else "new"
@@ -531,6 +569,7 @@ class ZhaozuoApp:
             )
             self.session_dir = RECORDINGS / self.session_id
             self.recorded_events = []
+            self.recorded_dropped = 0
             self.current_segment_index = 0
         elif not self.session_dir:
             self.report_var.set("找不到当前动作的录制目录，请重新演示。")
@@ -561,6 +600,10 @@ class ZhaozuoApp:
             self.recorded_events if self.recording_mode == "append" else [],
             captured_events,
         )
+        # 补录时旧片段丢的那几条同样缺在最终档案里，所以按会话累计而不是按片段覆盖。
+        self.recorded_dropped = (
+            self.recorded_dropped if self.recording_mode == "append" else 0
+        ) + self.recorder.dropped_records
         events = self.recorded_events
         self.state = "idle"
         self.record_button.configure(text="重新演示", bg=GREEN, fg="#08251d")
@@ -586,6 +629,7 @@ class ZhaozuoApp:
             self.goal_var.get(),
             events,
             self.profile,
+            dropped_records=self.recorded_dropped,
         )
         action = next(iter(self.profile["actions"].values()))
         detected_effect = any(isinstance(step.get("effect"), dict) for step in action["steps"])
@@ -599,6 +643,14 @@ class ZhaozuoApp:
             lines = ["没有捕获到目标软件操作，请重新演示。"]
         elif detected_effect:
             lines[-1] += "  ⚠ 最终对外动作"
+        else:
+            # 守卫放行时也必须亮出理由。否则「查过了，判定不是对外动作」和
+            # 「压根没查」在界面上一模一样，而 effects.py 允许 fail-open 的
+            # 全部正当性就建立在「放行结论可被审阅」这一句上。
+            verdict = assess(self.goal_var.get(), events)
+            lines.append("")
+            lines.append("未判定为对外动作，依据：" + "；".join(verdict["reasons"]))
+            lines.append("若这一步其实会发出去，请勾选下方「最终一步是对外动作」。")
         self._set_text(self.steps_text, "\n".join(lines))
         placeholders = list(
             next(iter(self.profile["actions"].values()))["input_schema"]["properties"]
@@ -615,12 +667,17 @@ class ZhaozuoApp:
             if self.recording_mode == "append"
             else f"已生成草案 · {len(action['steps'])} 步"
         )
-        self.report_var.set(
-            f"已保存动作草案 · 会话 {self.session_id} · {segment_count} 个片段"
-        )
+        report = f"已保存动作草案 · 会话 {self.session_id} · {segment_count} 个片段"
+        if self.recorded_dropped:
+            report += (
+                f"\n⚠ 录制期间丢失 {self.recorded_dropped} 条输入，档案可能缺步。"
+                "请重新演示后再往下走。"
+            )
+        self.report_var.set(report)
         self.confirm_var.set(False)
         self.pending_effect_step_id = None
         self.pending_effect_label = ""
+        self.pending_target_fingerprint = ""
         self.execute_button.configure(text="真实执行")
         self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
         self.show_dashboard()
@@ -689,6 +746,7 @@ class ZhaozuoApp:
         self._refresh_pill()
         profile = json.loads(json.dumps(self.profile, ensure_ascii=False))
         pending_step_id = self.pending_effect_step_id
+        confirmed_target = self.pending_target_fingerprint
 
         def worker() -> None:
             try:
@@ -704,6 +762,7 @@ class ZhaozuoApp:
                     progress=lambda text: self.worker_messages.put(("progress", text)),
                     confirmed_effect_step_id=pending_step_id,
                     start_step_id=pending_step_id,
+                    confirmed_target=confirmed_target or None,
                 )
                 self.worker_messages.put(("complete", report))
             except Exception as exc:  # execution boundary: turn all failures into a report
@@ -728,32 +787,76 @@ class ZhaozuoApp:
                 self.confirm_var.set(False)
                 if report.get("mode") == "awaiting_confirmation":
                     effect = report.get("pending_effect") or {}
+                    target = report.get("target") or {}
                     self.pending_effect_step_id = str(effect.get("step_id", ""))
                     self.pending_effect_label = str(effect.get("label", "最终对外动作"))
+                    # 人要确认的是"发给谁"，不只是"要不要发"。目标写进确认文案本身。
+                    self.pending_target_fingerprint = str(target.get("fingerprint", ""))
+                    target_text = self._describe_target(target)
                     self.status_var.set("已停在最后一步前，等待当下确认")
                     self.execute_button.configure(text=f"确认{self.pending_effect_label}")
                     self.confirm_check.configure(
-                        text=f"我确认现在执行：{self.pending_effect_label}"
+                        text=f"我确认现在执行：{self.pending_effect_label} → {target_text}"
                     )
                     self.report_var.set(
                         f"前置步骤已执行 {report.get('executed_step_count', 0)} 步；"
-                        f"尚未执行“{self.pending_effect_label}”。请检查目标、内容和账号后再确认。"
+                        f"尚未执行“{self.pending_effect_label}”。\n"
+                        f"目标：{target_text}\n"
+                        f"请确认目标、内容和账号无误后再继续。"
                     )
+                    self.show_dashboard()
+                    self._refresh_pill()
+                    continue
+                if report.get("mode") == "readiness_timeout":
+                    self.status_var.set("前置条件未满足，已停止")
+                    self.report_var.set(
+                        f"{report.get('error', '前置条件未满足')}\n"
+                        f"已执行 {report.get('executed_step_count', 0)} 步后停下，"
+                        f"没有继续往下点。"
+                    )
+                    self.execute_button.configure(text="真实执行")
+                    self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
+                    self.pending_effect_step_id = None
+                    self.pending_effect_label = ""
+                    self.pending_target_fingerprint = ""
+                    self.show_dashboard()
+                    self._refresh_pill()
+                    continue
+                if report.get("mode") == "target_unverified":
+                    # 拒绝执行不是失败，是守卫生效。文案必须让人看懂为什么被拦。
+                    target = report.get("target") or {}
+                    self.status_var.set("已拒绝执行对外动作")
+                    self.report_var.set(
+                        f"{report.get('error', '目标无法确认')}\n"
+                        f"解析到的目标：{self._describe_target(target)}\n"
+                        f"请让目标窗口处于确定状态后重试，或重新录制带进程身份的档案。"
+                    )
+                    self.execute_button.configure(text="真实执行")
+                    self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
+                    self.pending_effect_step_id = None
+                    self.pending_effect_label = ""
+                    self.pending_target_fingerprint = ""
                     self.show_dashboard()
                     self._refresh_pill()
                     continue
                 self.pending_effect_step_id = None
                 self.pending_effect_label = ""
+                self.pending_target_fingerprint = ""
                 self.execute_button.configure(text="真实执行")
                 self.confirm_check.configure(text="我已检查并允许真实键鼠操作")
                 self.status_var.set("执行完成" if report.get("ok") else "执行后证据未通过")
                 degraded = report.get("degraded_steps") or []
                 locator_results = report.get("locator_results") or []
                 uia_count = sum(1 for item in locator_results if item.get("used") == "uia")
+                timed = report.get("timed_steps") or []
+                unready = report.get("unready_steps") or []
                 self.report_var.set(
                     f"执行 {'成功' if report.get('ok') else '未验证成功'} · "
                     f"{report.get('step_count')} 步 · {report.get('duration_ms')}ms · "
-                    f"UIA 命中 {uia_count} 步 · 坐标兜底 {len(degraded)} 步"
+                    f"UIA 命中 {uia_count} 步 · 坐标兜底 {len(degraded)} 步\n"
+                    # 照秒表的步骤越多，这份档案在别的机器上越不可靠。
+                    f"等到状态 {len(report.get('readiness_results') or []) - len(timed)} 步 · "
+                    f"照秒表 {len(timed)} 步 · 等超时 {len(unready)} 步"
                 )
                 self.show_dashboard()
                 self._refresh_pill()

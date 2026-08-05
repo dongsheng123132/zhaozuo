@@ -1,6 +1,6 @@
 {
-  "$schema": "../schema/compatibility-action-profile.schema.json",
-  "profile_version": "0.1",
+  "$schema": "../schema/action-profile-v1.schema.json",
+  "profile_version": "1.0",
   "profile_id": "windows.chrome.learning-demo",
   "kind": "external_ui_adapter",
   "status": "draft",
@@ -10,7 +10,9 @@
     "platform": "windows",
     "observed_version": "150.0.7871.101",
     "discovery": {
-      "process_names": ["chrome.exe"],
+      "process_names": [
+        "chrome.exe"
+      ],
       "executable_candidates": [
         "C:/Program Files/Google/Chrome/Application/chrome.exe",
         "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
@@ -35,7 +37,9 @@
             "description": "要打开的 http/https URL"
           }
         },
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "additionalProperties": false
       },
       "risk": "low",
@@ -50,7 +54,9 @@
           "kind": "app.launch_or_focus",
           "timeout_ms": 10000,
           "args": {
-            "process_names": ["chrome.exe"],
+            "process_names": [
+              "chrome.exe"
+            ],
             "executable_candidates": [
               "C:/Program Files/Google/Chrome/Application/chrome.exe",
               "%LOCALAPPDATA%/Google/Chrome/Application/chrome.exe"
@@ -69,13 +75,21 @@
         {
           "id": "focus_address_bar",
           "kind": "keyboard.shortcut",
-          "args": { "keys": ["CTRL", "L"] },
+          "args": {
+            "keys": [
+              "CTRL",
+              "L"
+            ]
+          },
           "fallback": [
             {
               "kind": "uia.focus",
               "locator": {
                 "control_type": "Edit",
-                "name_any": ["地址和搜索栏", "Address and search bar"]
+                "name_any": [
+                  "地址和搜索栏",
+                  "Address and search bar"
+                ]
               }
             }
           ]
@@ -83,19 +97,29 @@
         {
           "id": "type_url",
           "kind": "keyboard.type",
-          "args": { "text": "${url}", "replace_existing": true },
+          "args": {
+            "text": "${url}",
+            "replace_existing": true
+          },
           "log_policy": "redact"
         },
         {
           "id": "navigate",
           "kind": "keyboard.press",
-          "args": { "key": "ENTER" }
+          "args": {
+            "key": "ENTER"
+          }
         },
         {
           "id": "wait_for_navigation",
           "kind": "window.observe_change",
           "timeout_ms": 15000,
-          "args": { "signals": ["title", "document_busy"] }
+          "args": {
+            "signals": [
+              "title",
+              "document_busy"
+            ]
+          }
         }
       ],
       "success_evidence": [

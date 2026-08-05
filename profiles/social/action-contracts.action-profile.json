@@ -1,6 +1,6 @@
 {
-  "$schema": "../schema/compatibility-action-profile.schema.json",
-  "profile_version": "0.1",
+  "$schema": "../schema/action-profile-v1.schema.json",
+  "profile_version": "1.0",
   "profile_id": "windows.social-actions.contract-drafts",
   "kind": "external_ui_adapter",
   "status": "draft",
@@ -9,9 +9,20 @@
     "name": "微信、微信公众号与抖音动作契约",
     "platform": "windows",
     "discovery": {
-      "process_names": ["Weixin.exe", "WeChat.exe", "chrome.exe", "msedge.exe"],
+      "process_names": [
+        "Weixin.exe",
+        "WeChat.exe",
+        "chrome.exe",
+        "msedge.exe"
+      ],
       "window": {
-        "title_any": ["微信", "WeChat", "微信公众平台", "抖音创作者中心", "抖音"]
+        "title_any": [
+          "微信",
+          "WeChat",
+          "微信公众平台",
+          "抖音创作者中心",
+          "抖音"
+        ]
       }
     }
   },
@@ -31,7 +42,10 @@
             "description": "回复正文；日志必须遮蔽"
           }
         },
-        "required": ["conversation", "reply_text"],
+        "required": [
+          "conversation",
+          "reply_text"
+        ],
         "additionalProperties": false
       },
       "risk": "high",
@@ -40,13 +54,17 @@
         {
           "id": "open_conversation",
           "kind": "conversation.open",
-          "args": {"name": "${conversation}"},
+          "args": {
+            "name": "${conversation}"
+          },
           "log_policy": "redact"
         },
         {
           "id": "fill_reply",
           "kind": "keyboard.type",
-          "args": {"text": "${reply_text}"},
+          "args": {
+            "text": "${reply_text}"
+          },
           "log_policy": "redact"
         },
         {
@@ -56,7 +74,13 @@
             "type": "representational_communication",
             "kind": "send_message",
             "label": "发送微信回复",
-            "confirmation": "always"
+            "confirmation": "always",
+            "reversible": false
+          },
+          "target_assertion": {
+            "min_confidence": "strong",
+            "require_unique": true,
+            "reconfirm_if_changed": true
           }
         }
       ],
@@ -75,11 +99,21 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "title": {"type": "string"},
-          "content_path": {"type": "string"},
-          "cover_path": {"type": "string"}
+          "title": {
+            "type": "string"
+          },
+          "content_path": {
+            "type": "string"
+          },
+          "cover_path": {
+            "type": "string"
+          }
         },
-        "required": ["title", "content_path", "cover_path"],
+        "required": [
+          "title",
+          "content_path",
+          "cover_path"
+        ],
         "additionalProperties": false
       },
       "risk": "high",
@@ -106,7 +140,13 @@
             "type": "representational_communication",
             "kind": "publish_content",
             "label": "发布公众号文章",
-            "confirmation": "always"
+            "confirmation": "always",
+            "reversible": false
+          },
+          "target_assertion": {
+            "min_confidence": "strong",
+            "require_unique": true,
+            "reconfirm_if_changed": true
           }
         }
       ],
@@ -125,9 +165,14 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "video_url": {"type": "string", "format": "uri"}
+          "video_url": {
+            "type": "string",
+            "format": "uri"
+          }
         },
-        "required": ["video_url"],
+        "required": [
+          "video_url"
+        ],
         "additionalProperties": false
       },
       "risk": "high",
@@ -136,7 +181,9 @@
         {
           "id": "open_video",
           "kind": "browser.open_url",
-          "args": {"url": "${video_url}"}
+          "args": {
+            "url": "${video_url}"
+          }
         },
         {
           "id": "like_video",
@@ -145,7 +192,13 @@
             "type": "representational_communication",
             "kind": "social_reaction",
             "label": "点赞这条视频",
-            "confirmation": "always"
+            "confirmation": "always",
+            "reversible": false
+          },
+          "target_assertion": {
+            "min_confidence": "strong",
+            "require_unique": true,
+            "reconfirm_if_changed": true
           }
         }
       ],

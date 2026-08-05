@@ -25,3 +25,4 @@ jobs:
         run: |
           python -m executor.cli validate profiles/chrome/open-url.action-profile.json --json
           python -m executor.cli validate profiles/wps/create-document.action-profile.json --json
+          python -m executor.cli validate profiles/social/action-contracts.action-profile.json --json

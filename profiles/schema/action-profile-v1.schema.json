@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dongsheng123132/zhaozuo/main/profiles/schema/action-profile-v1.schema.json",
+  "title": "Compatibility Action Profile v1",
+  "description": "影核（ActionParity）兼容动作档案 v1。描述如何从外部可靠执行第三方软件中的一个业务动作，并附带风险声明、目标断言与成功证据。冻结于 2026-08；v1 只做向后兼容的增补，破坏性变更走 v2。",
+  "type": "object",
+  "required": [
+    "profile_version",
+    "profile_id",
+    "kind",
+    "status",
+    "application",
+    "actions"
+  ],
+  "properties": {
+    "profile_version": {
+      "const": "1.0",
+      "description": "冻结的格式版本。校验器必须按此字段选择规则集。"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)+$",
+      "description": "档案的全局唯一 ID，点分命名空间。这是文档标识，允许连字符；被调用的 Action ID 不允许（见 actions.propertyNames）。"
+    },
+    "kind": {
+      "enum": ["external_ui_adapter", "native_action_core"],
+      "description": "external_ui_adapter 是从外部驱动 GUI 的兼容路径；native_action_core 表示目标软件自己提供了无界面动作核心。前者不构成影核符合性声明。"
+    },
+    "status": {
+      "enum": ["draft", "learned", "validated"],
+      "description": "生命周期。每一级的证据要求见 evidence 字段与 docs/ACTION-PROFILE-V1.md。"
+    },
+    "evidence": {
+      "type": "object",
+      "description": "支撑 status 的证据。validated 必填。",
+      "properties": {
+        "demonstrations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "变化演示次数：窗口位置、输入内容、初始状态至少各变过一次才算。"
+        },
+        "regression_runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ran_at", "result"],
+            "properties": {
+              "ran_at": { "type": "string", "format": "date-time" },
+              "result": { "enum": ["pass", "fail"] },
+              "app_version": { "type": "string" },
+              "os_build": { "type": "string" },
+              "dpi_scale": { "type": "number" },
+              "locale": { "type": "string" },
+              "notes": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "promoted_by": {
+          "type": "string",
+          "description": "把档案提升到当前 status 的人。录制器不得自行提升到 validated。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "compatibility": {
+      "type": "object",
+      "description": "声明这份档案在什么范围内被验证过。范围之外失效属于兼容性问题，不是缺陷。",
+      "properties": {
+        "app_versions": { "type": "array", "items": { "type": "string" } },
+        "os_builds": { "type": "array", "items": { "type": "string" } },
+        "dpi_scales": { "type": "array", "items": { "type": "number" } },
+        "locales": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "application": {
+      "type": "object",
+      "required": ["id", "name", "platform", "discovery"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "platform": { "enum": ["windows", "macos", "linux"] },
+        "observed_version": { "type": "string" },
+        "discovery": {
+          "type": "object",
+          "properties": {
+            "process_names": { "type": "array", "items": { "type": "string" } },
+            "executable_candidates": { "type": "array", "items": { "type": "string" } },
+            "window": { "$ref": "#/$defs/windowLocator" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "actions": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Action ID -> 动作定义。ID 是被承诺的调用接口，必须稳定且唯一。",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"
+      },
+      "additionalProperties": { "$ref": "#/$defs/action" }
+    }
+  },
+  "additionalProperties": false,
+
+  "$defs": {
+    "windowLocator": {
+      "type": "object",
+      "description": "窗口身份。process 最稳（进程名基本不变），class_name 次之（随框架版本变），title 最弱（随会话和文件名变）。只有 title 的定位器不足以支撑对外动作。",
+      "properties": {
+        "process": { "type": "string", "description": "所属可执行文件名，小写，如 wechat.exe" },
+        "class_name": { "type": "string" },
+        "title": { "type": "string" },
+        "title_regex": { "type": "string" },
+        "control_type": { "type": "string" },
+        "dpi": {
+          "type": "integer",
+          "description": "录制时该窗口的有效 DPI（96 = 100%）。不用于定位，用于解释坐标为何对不上。"
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "uiaLocator": {
+      "type": "object",
+      "properties": {
+        "control_type": { "type": "string" },
+        "control_type_id": { "type": "integer" },
+        "automation_id": { "type": "string" },
+        "class_name": { "type": "string" },
+        "framework_id": { "type": "string" },
+        "name": { "type": "string" },
+        "name_any": { "type": "array", "items": { "type": "string" } },
+        "recorded_relative_center": {
+          "type": ["object", "null"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "effect": {
+      "type": "object",
+      "description": "这一步会对外产生影响（发送、发布、互动、转发、支付、删除）。带 effect 的步骤必须在生效当下单独确认。",
+      "required": ["kind", "confirmation"],
+      "properties": {
+        "effect_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$",
+          "description": "效果分类 ID（哪一类对外动作），与档案的动作键（哪一个具体动作）不是一回事。"
+        },
+        "type": { "type": "string" },
+        "kind": {
+          "enum": [
+            "send_message",
+            "publish_content",
+            "social_reaction",
+            "share_content",
+            "payment",
+            "destructive",
+            "external_effect"
+          ]
+        },
+        "label": { "type": "string" },
+        "confirmation": { "const": "always" },
+        "reversible": {
+          "type": "boolean",
+          "description": "该效果能否由本档案自身撤销。默认按不可撤销处理。"
+        },
+        "confidence": {
+          "enum": ["declared", "control", "app_family", "user_declared"],
+          "description": "守卫是凭哪一路证据判定的：目标描述、控件身份、应用族、还是用户手动勾选。"
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "可审阅的判定依据。人应当能据此判断守卫是否判对了。"
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "targetAssertion": {
+      "type": "object",
+      "description": "对外动作生效前对目标窗口的要求。默认值即为最严格值：不满足就拒绝执行，不降级。",
+      "properties": {
+        "min_confidence": {
+          "enum": ["weak", "strong", "exact"],
+          "default": "strong",
+          "description": "窗口身份证据下限。仅靠 title 子串命中记为 weak。"
+        },
+        "require_unique": {
+          "type": "boolean",
+          "default": true,
+          "description": "同分候选超过一个时拒绝执行，而不是取第一个。"
+        },
+        "reconfirm_if_changed": {
+          "type": "boolean",
+          "default": true,
+          "description": "人确认之后目标窗口若发生变化，必须重新确认。"
+        },
+        "expected_state_version": {
+          "type": "string",
+          "description": "协议保留字段：远程/跨设备执行时的状态版本。当前执行器尚未实现，写了也不会被校验。"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "description": "协议保留字段：重试去重键。当前执行器尚未实现。"
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "successEvidence": {
+      "type": "object",
+      "required": ["kind"],
+      "description": "成功必须由可观察的证据证明。窗口标题是最弱的一种：消息发成功和发失败，标题往往一模一样。",
+      "properties": {
+        "kind": {
+          "enum": [
+            "window.title_contains",
+            "window.exists",
+            "uia.element_exists",
+            "uia.value_equals",
+            "uia.text_contains",
+            "file.exists",
+            "file.modified_since",
+            "file.hash_changed",
+            "clipboard.contains",
+            "process.running",
+            "browser.address_matches",
+            "file.size_greater_than",
+            "message.outgoing_visible",
+            "publication.status",
+            "control.toggle_state"
+          ]
+        },
+        "expected": { "type": ["string", "number", "boolean"] },
+        "path": { "type": "string" },
+        "locator": { "$ref": "#/$defs/uiaLocator" },
+        "window": { "$ref": "#/$defs/windowLocator" },
+        "process": { "type": "string" },
+        "normalization": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+
+    "step": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "enum": [
+            "pointer.click",
+            "pointer.double_click",
+            "pointer.drag",
+            "pointer.wheel",
+            "keyboard.press",
+            "keyboard.shortcut",
+            "keyboard.type",
+            "app.launch_or_focus",
+            "window.wait",
+            "window.observe_change",
+            "uia.focus",
+            "uia.invoke",
+            "wait.for_evidence"
+          ]
+        },
+        "description": { "type": "string" },
+        "captured_offset_ms": { "type": "integer", "minimum": 0 },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "本步等待前置条件就绪的预算。未声明时由执行器按录制间隔推导。"
+        },
+        "wait_for": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/successEvidence" },
+          "description": "本步执行前必须可观察为真的前置条件。声明了就必须满足，超时即中止 —— 未声明时执行器按定位器派生启发式条件。"
+        },
+        "args": { "type": "object" },
+        "locator": {
+          "type": "object",
+          "properties": {
+            "window": { "$ref": "#/$defs/windowLocator" },
+            "uia": { "$ref": "#/$defs/uiaLocator" },
+            "relative": {
+              "type": ["object", "null"],
+              "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+              "additionalProperties": false
+            },
+            "fallback_absolute": {
+              "type": ["array", "null"],
+              "items": { "type": "integer" },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "绝对坐标兜底。validated 档案不得依赖它 —— 它在换机器、换 DPI、换分辨率后必然失效。"
+            }
+          },
+          "additionalProperties": true
+        },
+        "fallback": { "type": "array" },
+        "log_policy": { "enum": ["normal", "redact"] },
+        "effect": { "$ref": "#/$defs/effect" },
+        "target_assertion": { "$ref": "#/$defs/targetAssertion" }
+      },
+      "additionalProperties": true
+    },
+
+    "action": {
+      "type": "object",
+      "required": [
+        "title",
+        "input_schema",
+        "risk",
+        "confirmation",
+        "steps",
+        "success_evidence"
+      ],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "input_schema": { "type": "object" },
+        "risk": { "enum": ["none", "low", "medium", "high"] },
+        "confirmation": { "enum": ["never", "before_execute", "before_effect"] },
+        "preconditions": { "type": "array", "items": { "type": "string" } },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/step" }
+        },
+        "success_evidence": {
+          "type": "array",
+          "minItems": 0,
+          "description": "draft 允许为空（演示时还没填成功标志）；learned 起必须非空，validated 还必须含一条非 window.title 的证据。",
+          "items": { "$ref": "#/$defs/successEvidence" }
+        },
+        "learned_from": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

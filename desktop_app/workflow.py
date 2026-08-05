@@ -1,17 +1,30 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
-EFFECT_RULES: tuple[tuple[tuple[str, ...], str, str, str], ...] = (
-    (("点赞", "喜欢", "关注", "转发", "评论"), "social_reaction", "社交互动", "social.react"),
-    (("公众号", "发布", "发表", "发文", "上传作品"), "publish_content", "发布内容", "content.publish"),
-    (("微信", "回复", "发送", "回消息"), "send_message", "发送消息", "message.reply"),
+from shared.action_id import (
+    derive_action_id,
+    derive_profile_id,
+    demo_suffix,
+    sanitize_action_id,
 )
+from shared.effects import assess, classify_effect, infer_effect
+from shared.profile import CURRENT_VERSION
+
+
+__all__ = [
+    "assess",
+    "build_profile",
+    "classify_effect",
+    "event_summary",
+    "infer_effect",
+    "merge_recording_segments",
+    "replayable_events",
+    "save_recording",
+]
 
 IGNORED_WINDOW_CLASSES = {
     "Shell_TrayWnd",
@@ -84,93 +97,23 @@ def merge_recording_segments(
     return merged
 
 
-def classify_effect(goal: str) -> dict[str, str] | None:
-    normalized = goal.casefold()
-    if "抖音" in normalized and any(word in normalized for word in ("点赞", "喜欢")):
-        return {
-            "type": "representational_communication",
-            "kind": "social_reaction",
-            "label": "点赞这条抖音视频",
-            "confirmation": "always",
-            "action_id": "douyin.like_video",
-        }
-    if "公众号" in normalized and any(word in normalized for word in ("发布", "发表", "发文")):
-        return {
-            "type": "representational_communication",
-            "kind": "publish_content",
-            "label": "发布公众号文章",
-            "confirmation": "always",
-            "action_id": "wechat_official.publish_article",
-        }
-    if "微信" in normalized and any(word in normalized for word in ("回复", "发送", "回消息")):
-        return {
-            "type": "representational_communication",
-            "kind": "send_message",
-            "label": "发送微信回复",
-            "confirmation": "always",
-            "action_id": "wechat.reply_message",
-        }
-    for keywords, kind, label, action_id in EFFECT_RULES:
-        if any(keyword in normalized for keyword in keywords):
-            return {
-                "type": "representational_communication",
-                "kind": kind,
-                "label": label,
-                "confirmation": "always",
-                "action_id": action_id,
-            }
-    return None
-
-
-def infer_effect(goal: str, events: list[dict[str, Any]]) -> dict[str, str] | None:
-    """Infer a guarded final effect from both intent and recorded evidence.
-
-    A user may forget to change the default goal or tick the effect checkbox.
-    A final Enter in WeChat must still never become an unguarded generic step.
-    """
-
-    declared = classify_effect(goal)
-    if declared:
-        return declared
-    if not events:
-        return None
-
-    final = events[-1]
-    title = str(final.get("window", {}).get("title", "")).casefold()
-    is_wechat = any(token in title for token in ("微信", "wechat", "weixin"))
-    if not is_wechat:
-        return None
-
-    is_enter = (
-        final.get("kind") == "keyboard.press"
-        and str(final.get("key", "")).upper() == "ENTER"
-    )
-    uia_name = str(final.get("uia", {}).get("name", "")).casefold()
-    is_send_button = final.get("kind") == "pointer.click" and (
-        "发送" in uia_name or "send" in uia_name
-    )
-    if not (is_enter or is_send_button):
-        return None
-    return {
-        "type": "representational_communication",
-        "kind": "send_message",
-        "label": "发送微信回复",
-        "confirmation": "always",
-        "action_id": "wechat.reply_message",
-    }
-
-
-def _action_slug(goal: str) -> str:
-    words = re.findall(r"[a-zA-Z0-9]+", goal.lower())
-    return "_".join(words[:5]) if words else "recorded_task"
-
-
 def event_summary(event: dict[str, Any]) -> str:
     window = str(event.get("window", {}).get("title", "")).strip() or "未知窗口"
     short_window = window if len(window) <= 34 else window[:31] + "…"
     kind = event.get("kind")
+    button = {"left": "", "right": "右键", "middle": "中键"}.get(
+        str(event.get("button", "left")), ""
+    )
     if kind == "pointer.click":
-        return f"点击 · {short_window}"
+        return f"{button}点击 · {short_window}"
+    if kind == "pointer.double_click":
+        return f"{button}双击 · {short_window}"
+    if kind == "pointer.drag":
+        return f"{button}拖拽 · {short_window}"
+    if kind == "pointer.wheel":
+        delta = int(event.get("delta", 0))
+        direction = "横向滚动" if event.get("horizontal") else ("向上滚动" if delta > 0 else "向下滚动")
+        return f"{direction} {abs(delta) // 120} 格 · {short_window}"
     if kind == "keyboard.shortcut":
         return f"快捷键 {'+'.join(event.get('keys', []))} · {short_window}"
     if kind == "keyboard.press":
@@ -189,6 +132,7 @@ def build_profile(
     events: list[dict[str, Any]],
     success_title: str,
     final_effect: bool | None = None,
+    action_id: str | None = None,
 ) -> dict[str, Any]:
     events = replayable_events(events)
     properties: dict[str, Any] = {}
@@ -202,13 +146,17 @@ def build_profile(
         "kind": "external_effect",
         "label": "最终对外动作",
         "confirmation": "always",
-        "action_id": f"workflow.{_action_slug(goal)}",
+        "action_id": derive_action_id(goal),
+        "confidence": "user_declared" if final_effect else "none",
+        "reasons": ["user_marked_final_effect"] if final_effect else [],
     }
     text_event_indexes = [
         index for index, event in enumerate(events) if event.get("kind") == "text.input"
     ]
     semantic_input_names: dict[int, str] = {}
-    if effect["action_id"] == "wechat.reply_message" and len(text_event_indexes) >= 2:
+    if effect.get("kind") == "send_message" and len(text_event_indexes) >= 2:
+        # 会话目标和正文是两个语义完全不同的输入：一个决定发给谁（发错人不可撤销），
+        # 一个决定发什么。合并成 text_1/text_2 会让调用方分不清哪个是收件人。
         semantic_input_names[text_event_indexes[0]] = "conversation"
         semantic_input_names[text_event_indexes[-1]] = "reply_text"
 
@@ -220,12 +168,18 @@ def build_profile(
             "title": window.get("title", ""),
             "class_name": window.get("class_name", ""),
         }
+        if window.get("process"):
+            window_locator["process"] = window["process"]
+        if window.get("dpi"):
+            # 记下录制时的缩放。定位不靠它，但换台机器缩放不同时，
+            # 这是唯一能解释"坐标为什么对不上"的线索。
+            window_locator["dpi"] = int(window["dpi"])
         base: dict[str, Any] = {
             "id": f"step_{index:03d}",
             "description": event_summary(event),
             "captured_offset_ms": event.get("offset_ms", 0),
         }
-        if kind == "pointer.click":
+        if kind in ("pointer.click", "pointer.double_click", "pointer.drag", "pointer.wheel"):
             locator = {
                 "window": window_locator,
                 "relative": event.get("relative"),
@@ -233,13 +187,18 @@ def build_profile(
             }
             if event.get("uia"):
                 locator["uia"] = event["uia"]
-            base.update(
-                {
-                    "kind": "pointer.click",
-                    "locator": locator,
-                    "args": {"button": event.get("button", "left")},
+            if kind == "pointer.wheel":
+                args: dict[str, Any] = {
+                    "delta": int(event.get("delta", 0)),
+                    "horizontal": bool(event.get("horizontal")),
                 }
-            )
+            else:
+                args = {"button": event.get("button", "left")}
+            if kind == "pointer.drag":
+                # 终点和起点一样重要：拖到哪里决定了选中了什么、放到了哪。
+                args["end_relative"] = event.get("end_relative")
+                args["end_absolute"] = event.get("end_absolute")
+            base.update({"kind": kind, "locator": locator, "args": args})
         elif kind == "keyboard.shortcut":
             locator = {"window": window_locator}
             if event.get("uia"):
@@ -295,7 +254,20 @@ def build_profile(
         steps.append(base)
 
     if should_mark_effect and steps:
-        steps[-1]["effect"] = {key: value for key, value in effect.items() if key != "action_id"}
+        # `action_id` 在效果块里指的是**效果分类**（这是"哪一类对外动作"），
+        # 和档案的动作键（这是"哪一个具体动作"）不是一回事。早期实现把两者混用，
+        # 导致所有微信回复共用一个 ID。这里改名 effect_id，语义不再重叠。
+        steps[-1]["effect"] = {
+            ("effect_id" if key == "action_id" else key): value
+            for key, value in effect.items()
+        }
+        steps[-1]["effect"].setdefault("reversible", False)
+        # 显式写出目标断言，即使全是默认值 —— 档案要能自证"发给谁被断言过"。
+        steps[-1]["target_assertion"] = {
+            "min_confidence": "strong",
+            "require_unique": True,
+            "reconfirm_if_changed": True,
+        }
 
     evidence: list[dict[str, Any]] = []
     if success_title.strip():
@@ -307,10 +279,18 @@ def build_profile(
             }
         )
 
-    action_id = effect["action_id"] if should_mark_effect else f"workflow.{_action_slug(goal)}"
+    # 录制器发的是**实例 ID**：效果分类 + 目标指纹，保证两次不同的演示不撞车。
+    # 规范 ID（如 wechat.reply_message）是被承诺的接口，只能由人在提升到
+    # validated 时通过 action_id 参数授予，录制器不自封。
+    default_action_id = (
+        f"{effect['action_id']}.{demo_suffix(goal)}"
+        if should_mark_effect
+        else derive_action_id(goal)
+    )
+    resolved_action_id = sanitize_action_id(action_id, default_action_id)
     return {
-        "profile_version": "0.1",
-        "profile_id": f"windows.zhaozuo.{_action_slug(goal)}",
+        "profile_version": CURRENT_VERSION,
+        "profile_id": derive_profile_id(goal),
         "kind": "external_ui_adapter",
         "status": "draft",
         "application": {
@@ -320,7 +300,7 @@ def build_profile(
             "discovery": {"window": {"strategy": "captured_windows"}},
         },
         "actions": {
-            action_id: {
+            resolved_action_id: {
                 "title": goal.strip(),
                 "description": "由照做录制器从一次人工演示生成的候选动作，尚需变化回放验证。",
                 "input_schema": {
@@ -345,6 +325,7 @@ def save_recording(
     goal: str,
     events: list[dict[str, Any]],
     profile: dict[str, Any],
+    dropped_records: int = 0,
 ) -> dict[str, Path]:
     session_dir.mkdir(parents=True, exist_ok=True)
     events_path = session_dir / "events.jsonl"
@@ -369,6 +350,9 @@ def save_recording(
                     (int(event.get("segment_index") or 1) for event in events),
                     default=0,
                 ),
+                # >0 表示这次录制不完整：档案里少的那几步不会有任何其它痕迹。
+                "dropped_records": int(dropped_records),
+                "complete": int(dropped_records) == 0,
                 "typed_text_policy": "redacted",
                 "profile": profile_path.name,
             },
