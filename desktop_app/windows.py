@@ -313,6 +313,11 @@ def score_window_candidate(
     ):
         score += _SCORE_TITLE_PARTIAL
         reasons.append("title=partial")
+    elif recorded_title and candidate_title:
+        # 录过标题、而且明确对不上。不扣分也不否决 —— IM 标题随会话变是常态，
+        # 否决会让正常回放全失败。但这件事必须留在 reasons 里：不写出来，
+        # 复核的人根本看不出「档案录的是张三，现在这个窗口是文件传输助手」。
+        reasons.append("title=mismatch")
 
     return (score, reasons) if score else None
 
@@ -345,6 +350,12 @@ def resolve_window(recorded: dict[str, Any]) -> dict[str, Any]:
         else "strong" if score >= _CONFIDENCE_STRONG
         else "weak"
     )
+    if confidence == "exact" and "title=mismatch" in reasons:
+        # 进程和类名对上就能凑够 exact 的分，但 exact 的意思是"就是同一个窗口"。
+        # 录过标题却对不上时，这个词宣称的东西超出了手上的证据 —— 降到 strong。
+        # 对外动作两档都放行，所以这不改变执行行为，只是不让标签替证据说话；
+        # 真正拦住"发给李四"的是执行前的目标指纹比对（含标题）。
+        confidence = "strong"
     return {
         "hwnd": hwnd,
         "confidence": confidence,

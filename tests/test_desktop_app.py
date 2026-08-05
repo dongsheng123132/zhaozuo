@@ -422,6 +422,34 @@ class DesktopWorkflowTests(unittest.TestCase):
         self.assertIn("缺少确认时的目标指纹", report["error"])
         click.assert_not_called()
 
+    def test_exact_is_not_claimed_when_the_recorded_title_does_not_match(self) -> None:
+        """exact 的意思是「就是同一个窗口」，不能靠进程+类名就凑出来。
+
+        微信换个会话，标题从「张三」变成「文件传输助手」，进程和类名一个没变 ——
+        分数照样够 7 分。把这叫 exact 是拿标签替证据说话：真正拦住「发给李四」
+        的是执行前的指纹比对，不是这个词；但下一个调用方很可能写
+        `if confidence == "exact": 跳过确认`。
+        """
+
+        recorded = {"process": "weixin.exe", "class_name": "WeChatMainWndForPC", "title": "张三"}
+
+        def confidence_for(title: str) -> tuple[str, list[str]]:
+            with patch.object(windows, "_enumerate_windows", return_value=[1]), \
+                 patch.object(windows, "window_context", return_value={
+                     "process": "weixin.exe", "class_name": "WeChatMainWndForPC", "title": title}):
+                match = windows.resolve_window(recorded)
+            return match["confidence"], match["reasons"]
+
+        # 同一个会话，以及「张三 (3)」这种未读角标：正常回放不能因此失效。
+        self.assertEqual(confidence_for("张三")[0], "exact")
+        self.assertEqual(confidence_for("张三 (3)")[0], "exact")
+
+        for other in ("李四", "文件传输助手"):
+            with self.subTest(title=other):
+                confidence, reasons = confidence_for(other)
+                self.assertEqual(confidence, "strong", f"{other} 不该被判成 exact")
+                self.assertIn("title=mismatch", reasons)
+
     def test_window_scoring_rejects_same_named_window_of_another_app(self) -> None:
         recorded = {"title": "微信", "class_name": "WeChatMainWndForPC", "process": "wechat.exe"}
 
@@ -433,12 +461,13 @@ class DesktopWorkflowTests(unittest.TestCase):
                  "process": "chrome.exe"},
             )
         )
-        # 同一个软件、标题变了（换了会话）：仍然可信。
+        # 同一个软件、标题变了（换了会话）：仍然可信，但必须说出标题对不上。
         strong = windows.score_window_candidate(
             recorded,
             {"title": "张总", "class_name": "WeChatMainWndForPC", "process": "wechat.exe"},
         )
         self.assertIsNotNone(strong)
+        self.assertIn("title=mismatch", strong[1])
         self.assertGreaterEqual(strong[0], 7)
         # 旧档案没有 process 字段：靠类名+标题仍能强匹配，不因升级而失效。
         legacy = windows.score_window_candidate(
